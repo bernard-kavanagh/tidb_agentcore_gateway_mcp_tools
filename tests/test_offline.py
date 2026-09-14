@@ -1,0 +1,181 @@
+"""Offline tests for the two pieces that need no live cluster:
+the deterministic contradiction test and the per-subject hash chain.
+
+These cover acceptance tests 2 (adjudication), 3 (corroboration), and 4 (dispute)
+at the logic level, plus tamper-evidence. Run directly:
+
+    python3 tests/test_offline.py
+
+(also importable as pytest test_* functions).
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from handlers.common.adjudication import adjudicate  # noqa: E402
+from handlers.common.hashing import (  # noqa: E402
+    GENESIS_HASH,
+    compute_event_hash,
+    verify_chain,
+)
+
+
+# --------------------------------------------------------------------------
+# helpers
+# --------------------------------------------------------------------------
+def _event(subject_id, op, value, prev_hash, *, source="s", observed_at="2026-01-01 00:00:00.000000"):
+    """Build a fully-hashed event dict the way the write path does."""
+    fields = {
+        "subject_id": subject_id, "tenant_id": "t1", "op": op, "value": value,
+        "source": source, "confidence": "0.900", "agent_id": "a", "session_id": "sess",
+        "tool_turn": 1, "supersedes_event_id": None,
+        "observed_at": observed_at, "prev_hash": prev_hash,
+    }
+    fields["event_hash"] = compute_event_hash(fields)
+    return fields
+
+
+def _chain(subject_id, values):
+    """Build a linked per-subject chain from a list of values."""
+    events, prev = [], GENESIS_HASH
+    for i, v in enumerate(values):
+        ev = _event(subject_id, "assert", v, prev, observed_at=f"2026-01-01 00:00:0{i}.000000")
+        ev["event_id"] = 1000 + i
+        events.append(ev)
+        prev = ev["event_hash"]
+    return events
+
+
+# --------------------------------------------------------------------------
+# hashing / chain
+# --------------------------------------------------------------------------
+def test_hash_is_deterministic_and_value_sensitive():
+    a = _event(1, "assert", {"x": 1}, GENESIS_HASH)
+    b = _event(1, "assert", {"x": 1}, GENESIS_HASH)
+    c = _event(1, "assert", {"x": 2}, GENESIS_HASH)
+    assert a["event_hash"] == b["event_hash"], "same fields must hash identically"
+    assert a["event_hash"] != c["event_hash"], "different value must change the hash"
+
+
+def test_valid_chain_verifies():
+    ok, errors = verify_chain(_chain(7, [{"v": 1}, {"v": 2}, {"v": 3}]))
+    assert ok, errors
+
+
+def test_tampered_value_breaks_content_integrity():
+    events = _chain(7, [{"v": 1}, {"v": 2}, {"v": 3}])
+    events[1]["value"] = {"v": 999}  # mutate in place without re-hashing
+    ok, errors = verify_chain(events)
+    assert not ok and any("content hash mismatch" in e for e in errors), errors
+
+
+def test_broken_link_breaks_structural_integrity():
+    events = _chain(7, [{"v": 1}, {"v": 2}, {"v": 3}])
+    events[2]["prev_hash"] = "f" * 64  # detach the last event
+    ok, errors = verify_chain(events)
+    assert not ok, "a severed link must fail verification"
+
+
+def test_empty_chain_is_trivially_valid():
+    ok, errors = verify_chain([])
+    assert ok and not errors
+
+
+# --------------------------------------------------------------------------
+# adjudication — every value_type branch + authority gate
+# --------------------------------------------------------------------------
+def test_first_assert_creates():
+    d = adjudicate(value_type="scalar", incoming_value="Pro", current_value=None,
+                   has_current=False, incoming_rank=40, current_rank=-1)
+    assert d.kind == "assert_new" and d.op == "assert" and d.repoint_current
+
+
+def test_scalar_equal_corroborates():
+    d = adjudicate(value_type="scalar", incoming_value="Pro", current_value="Pro",
+                   has_current=True, incoming_rank=40, current_rank=100)
+    assert d.kind == "corroborate" and d.op == "assert" and not d.repoint_current
+
+
+def test_scalar_higher_authority_supersedes():
+    d = adjudicate(value_type="scalar", incoming_value="Enterprise", current_value="Pro",
+                   has_current=True, incoming_rank=100, current_rank=60)
+    assert d.kind == "supersede" and d.op == "supersede" and d.repoint_current
+    assert d.new_current_value == "Enterprise"
+
+
+def test_scalar_equal_authority_disputes_no_recency_supersede():
+    d = adjudicate(value_type="scalar", incoming_value="Enterprise", current_value="Pro",
+                   has_current=True, incoming_rank=60, current_rank=60)
+    assert d.kind == "dispute" and d.op == "assert" and not d.repoint_current and d.disputed
+
+
+def test_scalar_lower_authority_disputes():
+    d = adjudicate(value_type="scalar", incoming_value="Enterprise", current_value="Pro",
+                   has_current=True, incoming_rank=40, current_rank=100)
+    assert d.kind == "dispute" and not d.repoint_current and d.disputed
+
+
+def test_monotonic_later_supersedes():
+    d = adjudicate(value_type="monotonic", incoming_value="2026-02-01", current_value="2026-01-01",
+                   has_current=True, incoming_rank=40, current_rank=100)
+    # recency legitimately supersedes for monotonic — even against a higher-rank source
+    assert d.kind == "update" and d.op == "supersede" and d.repoint_current
+
+
+def test_monotonic_earlier_is_stale_not_superseding():
+    d = adjudicate(value_type="monotonic", incoming_value="2025-12-01", current_value="2026-01-01",
+                   has_current=True, incoming_rank=100, current_rank=40)
+    assert d.kind == "stale" and d.op == "assert" and not d.repoint_current
+
+
+def test_monotonic_equal_corroborates():
+    d = adjudicate(value_type="monotonic", incoming_value="2026-01-01", current_value="2026-01-01",
+                   has_current=True, incoming_rank=40, current_rank=40)
+    assert d.kind == "corroborate"
+
+
+def test_set_new_member_unions():
+    d = adjudicate(value_type="set", incoming_value=["b"], current_value=["a"],
+                   has_current=True, incoming_rank=40, current_rank=40)
+    assert d.kind == "set_extend" and d.op == "assert" and d.repoint_current
+    assert sorted(d.new_current_value) == ["a", "b"]
+
+
+def test_set_subset_corroborates():
+    d = adjudicate(value_type="set", incoming_value=["a"], current_value=["a", "b"],
+                   has_current=True, incoming_rank=40, current_rank=40)
+    assert d.kind == "corroborate" and not d.repoint_current
+
+
+def test_freetext_identical_corroborates():
+    d = adjudicate(value_type="freetext", incoming_value="hi", current_value="hi",
+                   has_current=True, incoming_rank=40, current_rank=40)
+    assert d.kind == "corroborate"
+
+
+def test_freetext_differ_disputes():
+    d = adjudicate(value_type="freetext", incoming_value="hello", current_value="hi",
+                   has_current=True, incoming_rank=100, current_rank=40)
+    # even a higher-rank source does not auto-supersede free text
+    assert d.kind == "dispute" and not d.repoint_current and d.disputed
+
+
+# --------------------------------------------------------------------------
+# runner
+# --------------------------------------------------------------------------
+if __name__ == "__main__":
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for t in tests:
+        try:
+            t()
+            print(f"PASS  {t.__name__}")
+        except AssertionError as e:
+            failed += 1
+            print(f"FAIL  {t.__name__}: {e}")
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    sys.exit(1 if failed else 0)

@@ -1,0 +1,28 @@
+{
+  "name": "query_tenant_metrics",
+  "description": "Return a single named metric for the caller's tenant from a fixed registry (fact_count, active_count, disputed_count, superseded_count, retracted_count, event_count, supersede_rate, dispute_rate). Enumerated metrics only; no caller-supplied SQL or free-form aggregation.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "tenant_id": {
+        "type": "string",
+        "description": "Tenant to report on. Must equal the caller's verified tenant_id claim (enforced by Cedar)."
+      },
+      "metric": {
+        "type": "string",
+        "enum": [
+          "fact_count",
+          "active_count",
+          "disputed_count",
+          "superseded_count",
+          "retracted_count",
+          "event_count",
+          "supersede_rate",
+          "dispute_rate"
+        ],
+        "description": "The named metric to compute."
+      }
+    },
+    "required": ["tenant_id", "metric"]
+  }
+}

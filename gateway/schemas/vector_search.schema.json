@@ -1,0 +1,24 @@
+{
+  "name": "vector_search",
+  "description": "Semantic recall over facts. Embeds query_text and returns the nearest fact subjects for the caller's tenant, each with its current value and status. Tenant-scoped; no free-form SQL.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "tenant_id": {
+        "type": "string",
+        "description": "Tenant to search within. Must equal the caller's verified tenant_id claim (enforced by Cedar)."
+      },
+      "query_text": {
+        "type": "string",
+        "description": "Natural-language text to embed and match against subject embeddings."
+      },
+      "top_k": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "description": "Number of nearest subjects to return (default 10, capped at 50)."
+      }
+    },
+    "required": ["tenant_id", "query_text"]
+  }
+}

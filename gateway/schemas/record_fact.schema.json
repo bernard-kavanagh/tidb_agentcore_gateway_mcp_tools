@@ -1,0 +1,35 @@
+{
+  "name": "record_fact",
+  "description": "Record a fact about a subject through the governed write path. Runs the deterministic contradiction test (per-predicate conflict rule + source-authority gate), appends a hash-chained event to the append-only audit log, and upserts the current truth in one ACID transaction. Corroborations raise confidence, higher-authority contradictions supersede (prior event retained), equal/lower-authority contradictions are recorded as disputes. tenant_id must equal the caller's identity claim.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "tenant_id": {
+        "type": "string",
+        "description": "Tenant the fact belongs to. Must equal the caller's verified tenant_id claim (enforced by Cedar before the tool runs)."
+      },
+      "subject": {
+        "type": "string",
+        "description": "The entity the fact is about (domain-neutral, e.g. an account, device, or record identifier)."
+      },
+      "predicate": {
+        "type": "string",
+        "description": "The attribute being asserted. Must be declared in the predicate registry (e.g. status, last_seen, known_aliases, notes)."
+      },
+      "value": {
+        "description": "The asserted value. Any JSON type; shape depends on the predicate's value_type (scalar/monotonic/set/freetext)."
+      },
+      "source": {
+        "type": "string",
+        "description": "Provenance of the assertion; ranked by the source-authority gate (e.g. system_of_record, verified_integration, user_assertion, agent_inference)."
+      },
+      "confidence": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Optional confidence in the assertion, 0..1."
+      }
+    },
+    "required": ["tenant_id", "subject", "predicate", "value", "source"]
+  }
+}

@@ -1,0 +1,4 @@
+# Dev/test-only dependencies for the standalone MCP test caller (test_fact_layer.py).
+# NOT part of the Lambda deployment package — see requirements.txt for production deps.
+mcp>=1.0.0        # MCP client (streamable HTTP) used to call the Gateway
+boto3>=1.34.0     # Cognito auth for the test caller (also a prod dep; listed for standalone convenience)

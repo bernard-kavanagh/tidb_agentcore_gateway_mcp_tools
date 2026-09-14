@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Local operator env (secrets/ARNs live here — never commit)
+deploy/env.sh
+
+# OS / editor
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json
