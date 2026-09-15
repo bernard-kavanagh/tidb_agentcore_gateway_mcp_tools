@@ -27,6 +27,11 @@ from handlers.common.write_control import (  # noqa: E402
     enforce_write_control_floor,
 )
 from handlers.common.authority import select_authority  # noqa: E402
+from handlers.common.entity import (  # noqa: E402
+    build_canonical_key,
+    normalize_assessor_type,
+    normalize_relationship,
+)
 
 
 # --------------------------------------------------------------------------
@@ -253,6 +258,42 @@ def test_authority_tenant_specific_beats_wildcard():
     assert m.authority == 80 and m.policy_version == "v1-tenantA"
     other = select_authority(rows, predicate="status", source="s", tenant_id="tenantB")
     assert other.authority == 50 and other.policy_version == "v1"
+
+
+# --------------------------------------------------------------------------
+# canonical entity identity + evidence relationships (pure)
+# --------------------------------------------------------------------------
+def test_canonical_key_is_deterministic_and_normalized():
+    # Same real-world id in different representations -> same canonical key.
+    a = build_canonical_key("customer", "  John@Example.com ")
+    b = build_canonical_key("Customer", "john@example.com")
+    assert a == b == "customer:john@example.com"
+
+
+def test_canonical_key_distinct_types_do_not_collide():
+    assert build_canonical_key("device", "123") != build_canonical_key("card", "123")
+
+
+def test_relationship_validation():
+    assert normalize_relationship(None) == "SUPPORTS"       # default
+    assert normalize_relationship("contradicts") == "CONTRADICTS"
+    try:
+        normalize_relationship("bogus")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid relationship must raise")
+
+
+def test_assessor_type_validation():
+    assert normalize_assessor_type(None) is None
+    assert normalize_assessor_type("Human") == "human"
+    try:
+        normalize_assessor_type("robot")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid assessor_type must raise")
 
 
 # --------------------------------------------------------------------------

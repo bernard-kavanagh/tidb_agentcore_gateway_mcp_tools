@@ -26,9 +26,12 @@ CREATE USER '<FACT_ROLE>'@'%'
   RESOURCE GROUP rg_fact_layer;
 
 -- 3. Minimal DML grants on the fact-layer schema only.
-GRANT SELECT, INSERT, UPDATE ON <DB>.fact_subject   TO '<FACT_ROLE>'@'%';
-GRANT SELECT, INSERT         ON <DB>.fact_event      TO '<FACT_ROLE>'@'%';  -- append-only: no UPDATE/DELETE
-GRANT SELECT, INSERT, UPDATE ON <DB>.fact_current    TO '<FACT_ROLE>'@'%';
+GRANT SELECT, INSERT, UPDATE ON <DB>.fact_subject    TO '<FACT_ROLE>'@'%';
+GRANT SELECT, INSERT         ON <DB>.fact_event       TO '<FACT_ROLE>'@'%';  -- append-only: no UPDATE/DELETE
+GRANT SELECT, INSERT, UPDATE ON <DB>.fact_current     TO '<FACT_ROLE>'@'%';
+GRANT SELECT, INSERT, UPDATE ON <DB>.entity           TO '<FACT_ROLE>'@'%';  -- resolve-or-create canonical entities
+GRANT SELECT, INSERT         ON <DB>.entity_alias     TO '<FACT_ROLE>'@'%';
+GRANT SELECT, INSERT         ON <DB>.fact_evidence    TO '<FACT_ROLE>'@'%';  -- append evidence references
 GRANT SELECT                 ON <DB>.predicate_rule   TO '<FACT_ROLE>'@'%';
 GRANT SELECT                 ON <DB>.source_rank      TO '<FACT_ROLE>'@'%';  -- legacy/reference
 GRANT SELECT                 ON <DB>.authority_policy TO '<FACT_ROLE>'@'%';  -- predicate-specific authority (adjudication)

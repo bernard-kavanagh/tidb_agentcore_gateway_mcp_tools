@@ -27,7 +27,39 @@
         "type": "number",
         "minimum": 0,
         "maximum": 1,
-        "description": "Optional confidence in the assertion, 0..1."
+        "description": "Optional assessment confidence 0..1. NOT a calibrated probability of truth unless the source establishes one; name model scores appropriately (model_score/risk_score) in metadata."
+      },
+      "entity_id": {
+        "type": "integer",
+        "description": "Optional canonical entity id to bind this fact to. Use this OR entity_type."
+      },
+      "entity_type": {
+        "type": "string",
+        "description": "Optional entity type (customer|account|device|ip|card|merchant|...). With canonical_key/entity_key (or the subject) it resolves-or-creates a canonical entity deterministically."
+      },
+      "canonical_key": {
+        "type": "string",
+        "description": "Optional raw identifier for the entity (defaults to subject). Combined with entity_type into a deterministic canonical key."
+      },
+      "assessor_type": {
+        "type": "string",
+        "enum": ["human", "system", "model", "agent", "user"],
+        "description": "Optional: what KIND of assessor produced this assertion."
+      },
+      "evidence": {
+        "type": "array",
+        "description": "Optional references back to fraud-domain observations (references, never copies).",
+        "items": {
+          "type": "object",
+          "properties": {
+            "evidence_type": {"type": "string", "description": "transaction|alert|investigation|model_run|chargeback|device_signal|document|..."},
+            "evidence_ref": {"type": "string", "description": "External id in the fraud system (e.g. TX-123, INV-847)."},
+            "relationship": {"type": "string", "enum": ["SUPPORTS", "CONTRADICTS", "DERIVED_FROM", "TRIGGERED_BY", "REVIEWED_IN"], "description": "How the evidence relates to the assertion (default SUPPORTS)."},
+            "metadata": {"type": "object", "description": "Optional small structured metadata (no domain-record copies)."},
+            "observed_at": {"type": "string", "description": "Optional ISO-8601 time the evidence was observed."}
+          },
+          "required": ["evidence_type", "evidence_ref"]
+        }
       }
     },
     "required": ["tenant_id", "subject", "predicate", "value", "source"]

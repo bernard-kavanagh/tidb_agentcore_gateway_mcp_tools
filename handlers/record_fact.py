@@ -13,8 +13,13 @@ Nothing is ever overwritten in place: supersede/dispute always append and the
 prior event stays in the log, hash-chained. That is the audit.
 
 Tool input (per record_fact.schema.json): tenant_id, subject, predicate, value,
-source, confidence. Identity/provenance (agent_id, session_id, tool_turn) and
-the tenant-scoped DB credential come from the interceptor context, never the
+source, confidence. Optional Evidence->Assessment->Resolution fields (all
+backward-compatible): entity_id OR (entity_type [+ canonical_key/entity_key]) to
+bind the fact to a canonical entity; assessor_type (human|system|model|agent|user);
+evidence[] = references back to fraud-domain observations
+({evidence_type, evidence_ref, relationship?, metadata?, observed_at?}) — stored
+as references, never copies. Identity/provenance (agent_id, session_id, tool_turn)
+and the tenant-scoped DB credential come from the interceptor context, never the
 caller.
 """
 
@@ -29,6 +34,11 @@ from .common import context, embeddings
 from .common.adjudication import adjudicate
 from .common.authority import resolve_authority
 from .common.db import get_engine
+from .common.entity import (
+    normalize_assessor_type,
+    normalize_relationship,
+    resolve_or_create_entity,
+)
 from .common.hashing import GENESIS_HASH, compute_event_hash
 from .common.write_control import enforce_write_control_floor
 
@@ -47,6 +57,20 @@ def handler(event, _lambda_context=None):
         value = args["value"]
         source = args["source"]
         confidence = args.get("confidence")
+        # Optional Evidence->Assessment->Resolution fields (all backward-compatible;
+        # existing callers that send only subject/predicate/value/source/confidence
+        # keep working unchanged):
+        arg_entity_id = args.get("entity_id")
+        entity_type = args.get("entity_type")
+        entity_key = args.get("canonical_key") or args.get("entity_key")  # raw identifier
+        assessor_type = normalize_assessor_type(args.get("assessor_type"))
+        evidence = args.get("evidence") or []
+        if not isinstance(evidence, list):
+            raise ValueError("evidence must be a list of {evidence_type, evidence_ref, ...}")
+        for ev in evidence:
+            if not isinstance(ev, dict) or "evidence_type" not in ev or "evidence_ref" not in ev:
+                raise ValueError("each evidence item needs evidence_type and evidence_ref")
+            normalize_relationship(ev.get("relationship"))  # validate up front (pure)
         # Write-control gate: reject sub-floor confidence BEFORE adjudication.
         enforce_write_control_floor(confidence)
     except (KeyError, PermissionError, ValueError) as e:
@@ -79,12 +103,24 @@ def handler(event, _lambda_context=None):
             if value_type is None:
                 raise ValueError(f"predicate '{predicate}' is not in predicate_rule")
 
+            # --- entity resolution (optional; deterministic canonical key) ---
+            # We do NOT do general-purpose entity resolution: an explicit entity_id
+            # is used as-is, else (entity_type + identifier) resolves-or-creates a
+            # canonical entity idempotently on (tenant, canonical_key).
+            resolved_entity_id = int(arg_entity_id) if arg_entity_id is not None else None
+            if resolved_entity_id is None and entity_type:
+                resolved_entity_id, _ = resolve_or_create_entity(
+                    cx, tenant_id=tenant, entity_type=entity_type,
+                    raw_identifier=entity_key or subject,
+                )
+
             # --- 1. resolve-or-create subject, then lock it ---
             cx.execute(
                 text("INSERT IGNORE INTO fact_subject "
-                     "(tenant_id, subject, predicate, subject_vec, last_event_hash) "
-                     "VALUES (:t, :s, :p, :vec, NULL)"),
-                {"t": tenant, "s": subject, "p": predicate, "vec": subject_vec},
+                     "(tenant_id, subject, predicate, subject_vec, last_event_hash, entity_id) "
+                     "VALUES (:t, :s, :p, :vec, NULL, :eid)"),
+                {"t": tenant, "s": subject, "p": predicate, "vec": subject_vec,
+                 "eid": resolved_entity_id},
             )
             subj = cx.execute(
                 text("SELECT subject_id, last_event_hash FROM fact_subject "
@@ -93,6 +129,13 @@ def handler(event, _lambda_context=None):
             ).first()
             subject_id = int(subj.subject_id)
             prev_hash = subj.last_event_hash or GENESIS_HASH
+            # Link a pre-existing subject to a newly-resolved entity if it had none.
+            if resolved_entity_id is not None:
+                cx.execute(
+                    text("UPDATE fact_subject SET entity_id=:eid "
+                         "WHERE subject_id=:id AND entity_id IS NULL"),
+                    {"eid": resolved_entity_id, "id": subject_id},
+                )
 
             # --- 2. current winner ---
             cur = cx.execute(
@@ -155,15 +198,17 @@ def handler(event, _lambda_context=None):
                     "INSERT INTO fact_event "
                     "(subject_id, tenant_id, op, value, source, confidence, agent_id, "
                     " session_id, tool_turn, supersedes_event_id, observed_at, "
-                    " prev_hash, event_hash, outcome, policy_version) "
+                    " prev_hash, event_hash, outcome, policy_version, assessor_type) "
                     "VALUES (:subject_id, :tenant_id, :op, :value, :source, :confidence, "
                     " :agent_id, :session_id, :tool_turn, :supersedes_event_id, "
-                    " :observed_at, :prev_hash, :event_hash, :outcome, :policy_version)"
+                    " :observed_at, :prev_hash, :event_hash, :outcome, :policy_version, "
+                    " :assessor_type)"
                 ),
-                # outcome + policy_version are additive audit columns, NOT part of
-                # the hash (hashing.HASHED_FIELDS is unchanged).
+                # outcome + policy_version + assessor_type are additive audit columns,
+                # NOT part of the hash (hashing.HASHED_FIELDS is unchanged).
                 {**fields, "value": json.dumps(value), "event_hash": event_hash,
-                 "outcome": d.outcome, "policy_version": policy_version},
+                 "outcome": d.outcome, "policy_version": policy_version,
+                 "assessor_type": assessor_type},
             )
             event_id = ins.lastrowid or cx.execute(text("SELECT LAST_INSERT_ID()")).scalar()
             event_id = int(event_id)
@@ -173,6 +218,22 @@ def handler(event, _lambda_context=None):
                 text("UPDATE fact_subject SET last_event_hash=:h WHERE subject_id=:id"),
                 {"h": event_hash, "id": subject_id},
             )
+
+            # --- 5b. attach evidence references (references, never domain copies) ---
+            for ev in evidence:
+                meta = ev.get("metadata")
+                cx.execute(
+                    text("INSERT INTO fact_evidence "
+                         "(tenant_id, event_id, subject_id, entity_id, evidence_type, "
+                         " evidence_ref, relationship, metadata, observed_at) "
+                         "VALUES (:t, :eid, :sid, :ent, :etype, :eref, :rel, :meta, :obs)"),
+                    {"t": tenant, "eid": event_id, "sid": subject_id,
+                     "ent": resolved_entity_id,
+                     "etype": str(ev["evidence_type"]), "eref": str(ev["evidence_ref"]),
+                     "rel": normalize_relationship(ev.get("relationship")),
+                     "meta": json.dumps(meta) if meta is not None else None,
+                     "obs": ev.get("observed_at")},
+                )
 
             # --- 6. write-through fact_current (same transaction) ---
             competing: list[int] = []
@@ -223,6 +284,8 @@ def handler(event, _lambda_context=None):
             "op": d.op,
             "policy_version": policy_version,
             "subject_id": subject_id,
+            "entity_id": resolved_entity_id,
+            "evidence_count": len(evidence),
             "competing_event_ids": competing,
         }
     except ValueError as e:
