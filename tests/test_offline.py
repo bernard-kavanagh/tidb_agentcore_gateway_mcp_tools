@@ -71,6 +71,23 @@ def test_hash_is_deterministic_and_value_sensitive():
     assert a["event_hash"] != c["event_hash"], "different value must change the hash"
 
 
+def test_temporal_fields_are_hashed():
+    # valid_from/valid_to/asserted_at are material claims -> committed to the chain.
+    base = {
+        "subject_id": 1, "tenant_id": "t1", "op": "assert", "value": {"x": 1},
+        "source": "s", "confidence": "0.900", "agent_id": "a", "session_id": "sess",
+        "tool_turn": 1, "supersedes_event_id": None,
+        "observed_at": "2026-01-01 00:00:00.000000", "prev_hash": GENESIS_HASH,
+    }
+    h_none = compute_event_hash(base)                      # no validity window
+    h_vf = compute_event_hash({**base, "valid_from": "2026-01-01 00:00:00.000000"})
+    h_at = compute_event_hash({**base, "asserted_at": "2026-01-02 00:00:00.000000"})
+    assert h_none != h_vf, "valid_from must change the hash"
+    assert h_none != h_at, "asserted_at must change the hash"
+    # Back-compat: an event dict WITHOUT temporal keys still hashes deterministically.
+    assert compute_event_hash(base) == h_none
+
+
 def test_valid_chain_verifies():
     ok, errors = verify_chain(_chain(7, [{"v": 1}, {"v": 2}, {"v": 3}]))
     assert ok, errors

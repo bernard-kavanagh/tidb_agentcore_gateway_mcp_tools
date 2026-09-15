@@ -36,6 +36,12 @@ HASHED_FIELDS = (
     "session_id",
     "tool_turn",
     "supersedes_event_id",
+    # Temporal claims are MATERIAL, so they are committed to the chain. They
+    # default to None for events that don't assert a validity window, which keeps
+    # older events (no temporal fields) hashing consistently.
+    "valid_from",
+    "valid_to",
+    "asserted_at",
     "observed_at",
     "prev_hash",
 )
@@ -71,6 +77,10 @@ def _canonical_payload(fields: dict[str, Any]) -> dict[str, Any]:
             None if fields.get("supersedes_event_id") is None
             else int(fields["supersedes_event_id"])
         ),
+        # Temporal claims: stable ISO-8601 strings when present, else None.
+        "valid_from": None if fields.get("valid_from") is None else str(fields["valid_from"]),
+        "valid_to": None if fields.get("valid_to") is None else str(fields["valid_to"]),
+        "asserted_at": None if fields.get("asserted_at") is None else str(fields["asserted_at"]),
         # observed_at must arrive as a stable ISO-8601 string (UTC, microseconds).
         "observed_at": str(fields["observed_at"]),
         "prev_hash": str(fields["prev_hash"]),

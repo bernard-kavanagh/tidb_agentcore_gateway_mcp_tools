@@ -64,6 +64,11 @@ def handler(event, _lambda_context=None):
         entity_type = args.get("entity_type")
         entity_key = args.get("canonical_key") or args.get("entity_key")  # raw identifier
         assessor_type = normalize_assessor_type(args.get("assessor_type"))
+        # Temporal claims (optional ISO-8601 strings). valid_from/valid_to are the
+        # real-world validity window; asserted_at defaults to observed_at below.
+        arg_valid_from = args.get("valid_from")
+        arg_valid_to = args.get("valid_to")
+        arg_asserted_at = args.get("asserted_at")
         evidence = args.get("evidence") or []
         if not isinstance(evidence, list):
             raise ValueError("evidence must be a list of {evidence_type, evidence_ref, ...}")
@@ -92,6 +97,8 @@ def handler(event, _lambda_context=None):
         subject_vec = embeddings.to_vector_literal(embeddings.embed(subject))
 
     observed_at = _utc_now_str()
+    # asserted_at defaults to observed_at when the caller does not distinguish them.
+    asserted_at = arg_asserted_at or observed_at
 
     try:
         with engine.begin() as cx:
@@ -189,6 +196,9 @@ def handler(event, _lambda_context=None):
                 "session_id": ctx.session_id,
                 "tool_turn": ctx.tool_turn,
                 "supersedes_event_id": supersedes,
+                "valid_from": arg_valid_from,
+                "valid_to": arg_valid_to,
+                "asserted_at": asserted_at,
                 "observed_at": observed_at,
                 "prev_hash": prev_hash,
             }
@@ -197,10 +207,12 @@ def handler(event, _lambda_context=None):
                 text(
                     "INSERT INTO fact_event "
                     "(subject_id, tenant_id, op, value, source, confidence, agent_id, "
-                    " session_id, tool_turn, supersedes_event_id, observed_at, "
+                    " session_id, tool_turn, supersedes_event_id, valid_from, valid_to, "
+                    " asserted_at, observed_at, "
                     " prev_hash, event_hash, outcome, policy_version, assessor_type) "
                     "VALUES (:subject_id, :tenant_id, :op, :value, :source, :confidence, "
                     " :agent_id, :session_id, :tool_turn, :supersedes_event_id, "
+                    " :valid_from, :valid_to, :asserted_at, "
                     " :observed_at, :prev_hash, :event_hash, :outcome, :policy_version, "
                     " :assessor_type)"
                 ),
@@ -242,22 +254,25 @@ def handler(event, _lambda_context=None):
                 cx.execute(
                     text("INSERT INTO fact_current "
                          "(subject_id, tenant_id, value, winning_event_id, status, "
-                         " policy_version, resolution_reason) "
-                         "VALUES (:id, :t, :v, :e, :st, :pv, :reason)"),
+                         " policy_version, resolution_reason, valid_from, valid_to) "
+                         "VALUES (:id, :t, :v, :e, :st, :pv, :reason, :vf, :vt)"),
                     {"id": subject_id, "t": tenant,
                      "v": json.dumps(d.new_current_value),
                      "e": event_id, "st": d.new_status,
-                     "pv": policy_version, "reason": reason},
+                     "pv": policy_version, "reason": reason,
+                     "vf": arg_valid_from, "vt": arg_valid_to},
                 )
                 status = d.new_status
             elif d.repoint_current:
                 cx.execute(
                     text("UPDATE fact_current "
                          "SET value=:v, winning_event_id=:e, status=:st, "
-                         "    policy_version=:pv, resolution_reason=:reason "
+                         "    policy_version=:pv, resolution_reason=:reason, "
+                         "    valid_from=:vf, valid_to=:vt "
                          "WHERE subject_id=:id"),
                     {"v": json.dumps(d.new_current_value), "e": event_id,
                      "st": d.new_status, "pv": policy_version, "reason": reason,
+                     "vf": arg_valid_from, "vt": arg_valid_to,
                      "id": subject_id},
                 )
                 status = d.new_status

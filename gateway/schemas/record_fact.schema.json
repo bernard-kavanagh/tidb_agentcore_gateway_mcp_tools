@@ -46,6 +46,18 @@
         "enum": ["human", "system", "model", "agent", "user"],
         "description": "Optional: what KIND of assessor produced this assertion."
       },
+      "valid_from": {
+        "type": "string",
+        "description": "Optional ISO-8601 start of the period this fact is TRUE in the real world (distinct from when it was observed/asserted)."
+      },
+      "valid_to": {
+        "type": "string",
+        "description": "Optional ISO-8601 end of the real-world validity period (open-ended if omitted)."
+      },
+      "asserted_at": {
+        "type": "string",
+        "description": "Optional ISO-8601 time the assertion was made (defaults to observed_at)."
+      },
       "evidence": {
         "type": "array",
         "description": "Optional references back to fraud-domain observations (references, never copies).",
