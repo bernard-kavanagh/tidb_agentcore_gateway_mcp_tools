@@ -29,6 +29,7 @@ from .common import context, embeddings
 from .common.adjudication import adjudicate
 from .common.db import get_engine
 from .common.hashing import GENESIS_HASH, compute_event_hash
+from .common.write_control import enforce_write_control_floor
 
 
 def _utc_now_str() -> str:
@@ -52,6 +53,8 @@ def handler(event, _lambda_context=None):
         value = args["value"]
         source = args["source"]
         confidence = args.get("confidence")
+        # Write-control gate: reject sub-floor confidence BEFORE adjudication.
+        enforce_write_control_floor(confidence)
     except (KeyError, PermissionError, ValueError) as e:
         return {"error": str(e), "error_type": type(e).__name__}
 

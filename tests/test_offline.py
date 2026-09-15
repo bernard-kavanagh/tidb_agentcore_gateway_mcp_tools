@@ -22,6 +22,10 @@ from handlers.common.hashing import (  # noqa: E402
     compute_event_hash,
     verify_chain,
 )
+from handlers.common.write_control import (  # noqa: E402
+    DEFAULT_MIN_CONFIDENCE,
+    enforce_write_control_floor,
+)
 
 
 # --------------------------------------------------------------------------
@@ -162,6 +166,40 @@ def test_freetext_differ_disputes():
                    has_current=True, incoming_rank=100, current_rank=40)
     # even a higher-rank source does not auto-supersede free text
     assert d.kind == "dispute" and not d.repoint_current and d.disputed
+
+
+# --------------------------------------------------------------------------
+# write-control floor — the admission gate that runs BEFORE adjudication
+# --------------------------------------------------------------------------
+def test_write_control_rejects_sub_floor_confidence():
+    # Just under the default floor -> rejected, naming both floor and value.
+    try:
+        enforce_write_control_floor(DEFAULT_MIN_CONFIDENCE - 0.01)
+    except ValueError as e:
+        msg = str(e)
+        assert str(DEFAULT_MIN_CONFIDENCE) in msg, msg
+        assert "0.84" in msg, msg
+    else:
+        raise AssertionError("sub-floor confidence must be rejected")
+
+
+def test_write_control_allows_at_or_above_floor():
+    # At the floor and above -> returned unchanged, never clamped.
+    assert enforce_write_control_floor(DEFAULT_MIN_CONFIDENCE) == DEFAULT_MIN_CONFIDENCE
+    assert enforce_write_control_floor(0.99) == 0.99
+
+
+def test_write_control_env_override():
+    prev = os.environ.get("WRITE_CONTROL_MIN_CONFIDENCE")
+    os.environ["WRITE_CONTROL_MIN_CONFIDENCE"] = "0.5"
+    try:
+        # 0.6 clears a lowered floor that would fail against the default.
+        assert enforce_write_control_floor(0.6) == 0.6
+    finally:
+        if prev is None:
+            del os.environ["WRITE_CONTROL_MIN_CONFIDENCE"]
+        else:
+            os.environ["WRITE_CONTROL_MIN_CONFIDENCE"] = prev
 
 
 # --------------------------------------------------------------------------
