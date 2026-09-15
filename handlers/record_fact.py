@@ -358,7 +358,7 @@ def handler(event, _lambda_context=None):
                      "t": tenant, "k": idempotency_key},
                 )
 
-        log_event("record_fact", tenant_id=t, predicate=predicate,
+        log_event("record_fact", tenant_id=tenant, predicate=predicate,
                   outcome=result["outcome"], status=result["status"],
                   policy_version=result["policy_version"],
                   subject_id=result["subject_id"], event_id=result["event_id"],

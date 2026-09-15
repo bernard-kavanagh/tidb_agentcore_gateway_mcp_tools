@@ -16,7 +16,7 @@ INSERT INTO predicate_rule (predicate, value_type) VALUES
 
 -- Source authority ranking — higher rank wins the authority gate on a contradiction.
 -- Unknown sources default to rank 0 in the handler.
-INSERT INTO source_rank (source, rank) VALUES
+INSERT INTO source_rank (source, `rank`) VALUES
   ('system_of_record',    100),
   ('verified_integration', 80),
   ('user_assertion',       60),

@@ -88,7 +88,7 @@ CREATE TABLE predicate_rule (
 -- ---------------------------------------------------------------------------
 CREATE TABLE source_rank (
   source VARCHAR(255) PRIMARY KEY,
-  rank   INT NOT NULL
+  `rank` INT NOT NULL          -- `rank` is a reserved word in TiDB 8.x; must be quoted
 );
 
 -- ---------------------------------------------------------------------------
