@@ -7,7 +7,7 @@
 --
 -- Grant ONLY the DML the handlers actually issue on the five tables:
 --   record_fact          : INSERT/UPDATE/SELECT on fact_subject, fact_event, fact_current;
---                          SELECT on predicate_rule, source_rank
+--                          SELECT on predicate_rule, source_rank, authority_policy
 --   vector_search        : SELECT on fact_subject, fact_current
 --   query_tenant_metrics : SELECT on fact_current, fact_event
 -- No DDL, no DELETE (the log is append-only), no access to other schemas.
@@ -29,8 +29,9 @@ CREATE USER '<FACT_ROLE>'@'%'
 GRANT SELECT, INSERT, UPDATE ON <DB>.fact_subject   TO '<FACT_ROLE>'@'%';
 GRANT SELECT, INSERT         ON <DB>.fact_event      TO '<FACT_ROLE>'@'%';  -- append-only: no UPDATE/DELETE
 GRANT SELECT, INSERT, UPDATE ON <DB>.fact_current    TO '<FACT_ROLE>'@'%';
-GRANT SELECT                 ON <DB>.predicate_rule  TO '<FACT_ROLE>'@'%';
-GRANT SELECT                 ON <DB>.source_rank     TO '<FACT_ROLE>'@'%';
+GRANT SELECT                 ON <DB>.predicate_rule   TO '<FACT_ROLE>'@'%';
+GRANT SELECT                 ON <DB>.source_rank      TO '<FACT_ROLE>'@'%';  -- legacy/reference
+GRANT SELECT                 ON <DB>.authority_policy TO '<FACT_ROLE>'@'%';  -- predicate-specific authority (adjudication)
 
 FLUSH PRIVILEGES;
 

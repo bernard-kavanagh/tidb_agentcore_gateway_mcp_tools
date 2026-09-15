@@ -27,6 +27,7 @@ from sqlalchemy import text
 
 from .common import context, embeddings
 from .common.adjudication import adjudicate
+from .common.authority import resolve_authority
 from .common.db import get_engine
 from .common.hashing import GENESIS_HASH, compute_event_hash
 from .common.write_control import enforce_write_control_floor
@@ -36,13 +37,6 @@ def _utc_now_str() -> str:
     # Naive UTC, microsecond precision. This exact string is both hashed and
     # stored in fact_event.observed_at DATETIME(6) so the hash is reproducible.
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-
-
-def _rank(cx, source: str) -> int:
-    r = cx.execute(
-        text("SELECT rank FROM source_rank WHERE source = :s"), {"s": source}
-    ).scalar()
-    return int(r) if r is not None else 0  # unknown source -> lowest authority
 
 
 def handler(event, _lambda_context=None):
@@ -109,14 +103,25 @@ def handler(event, _lambda_context=None):
             has_current = cur is not None
             current_value = json.loads(cur.value) if has_current else None
 
-            incoming_rank = _rank(cx, source)
+            # Predicate-specific, versioned authority (authority_policy) — not a
+            # global source rank. Record the policy_version that produced this
+            # resolution so it is never silently recomputed under a newer policy.
+            inc_auth = resolve_authority(
+                cx, tenant_id=tenant, predicate=predicate, source=source,
+                as_of=observed_at,
+            )
+            incoming_rank = inc_auth.authority
+            policy_version = inc_auth.policy_version
             current_rank = -1
             if has_current:
                 cur_source = cx.execute(
                     text("SELECT source FROM fact_event WHERE event_id=:e"),
                     {"e": cur.winning_event_id},
                 ).scalar()
-                current_rank = _rank(cx, cur_source)
+                current_rank = resolve_authority(
+                    cx, tenant_id=tenant, predicate=predicate, source=cur_source,
+                    as_of=observed_at,
+                ).authority
 
             # --- 3. deterministic contradiction test ---
             d = adjudicate(
@@ -150,12 +155,15 @@ def handler(event, _lambda_context=None):
                     "INSERT INTO fact_event "
                     "(subject_id, tenant_id, op, value, source, confidence, agent_id, "
                     " session_id, tool_turn, supersedes_event_id, observed_at, "
-                    " prev_hash, event_hash) "
+                    " prev_hash, event_hash, outcome, policy_version) "
                     "VALUES (:subject_id, :tenant_id, :op, :value, :source, :confidence, "
                     " :agent_id, :session_id, :tool_turn, :supersedes_event_id, "
-                    " :observed_at, :prev_hash, :event_hash)"
+                    " :observed_at, :prev_hash, :event_hash, :outcome, :policy_version)"
                 ),
-                {**fields, "value": json.dumps(value), "event_hash": event_hash},
+                # outcome + policy_version are additive audit columns, NOT part of
+                # the hash (hashing.HASHED_FIELDS is unchanged).
+                {**fields, "value": json.dumps(value), "event_hash": event_hash,
+                 "outcome": d.outcome, "policy_version": policy_version},
             )
             event_id = ins.lastrowid or cx.execute(text("SELECT LAST_INSERT_ID()")).scalar()
             event_id = int(event_id)
@@ -168,40 +176,52 @@ def handler(event, _lambda_context=None):
 
             # --- 6. write-through fact_current (same transaction) ---
             competing: list[int] = []
+            reason = d.notes[:255] if d.notes else None
             if not has_current:
                 cx.execute(
                     text("INSERT INTO fact_current "
-                         "(subject_id, tenant_id, value, winning_event_id, status) "
-                         "VALUES (:id, :t, :v, :e, :st)"),
+                         "(subject_id, tenant_id, value, winning_event_id, status, "
+                         " policy_version, resolution_reason) "
+                         "VALUES (:id, :t, :v, :e, :st, :pv, :reason)"),
                     {"id": subject_id, "t": tenant,
                      "v": json.dumps(d.new_current_value),
-                     "e": event_id, "st": d.new_status},
+                     "e": event_id, "st": d.new_status,
+                     "pv": policy_version, "reason": reason},
                 )
                 status = d.new_status
             elif d.repoint_current:
                 cx.execute(
                     text("UPDATE fact_current "
-                         "SET value=:v, winning_event_id=:e, status=:st WHERE subject_id=:id"),
+                         "SET value=:v, winning_event_id=:e, status=:st, "
+                         "    policy_version=:pv, resolution_reason=:reason "
+                         "WHERE subject_id=:id"),
                     {"v": json.dumps(d.new_current_value), "e": event_id,
-                     "st": d.new_status, "id": subject_id},
+                     "st": d.new_status, "pv": policy_version, "reason": reason,
+                     "id": subject_id},
                 )
                 status = d.new_status
             elif d.disputed:
                 cx.execute(
-                    text("UPDATE fact_current SET status='disputed' WHERE subject_id=:id"),
-                    {"id": subject_id},
+                    text("UPDATE fact_current SET status='disputed', "
+                         "    policy_version=:pv, resolution_reason=:reason "
+                         "WHERE subject_id=:id"),
+                    {"id": subject_id, "pv": policy_version, "reason": reason},
                 )
                 status = "disputed"
                 competing = [int(cur.winning_event_id), event_id]
             else:
-                # corroborate / stale: current value + winner unchanged.
+                # corroborate / stale / REJECTED: winner + current value unchanged.
+                # The event is still appended to the log as contrary/corroborating
+                # evidence; the resolution row is intentionally left untouched.
                 status = cur.status
 
         return {
             "event_id": event_id,
             "status": status,
             "decision": d.kind,
+            "outcome": d.outcome,
             "op": d.op,
+            "policy_version": policy_version,
             "subject_id": subject_id,
             "competing_event_ids": competing,
         }

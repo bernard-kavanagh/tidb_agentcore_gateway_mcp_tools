@@ -37,9 +37,23 @@ def _members_to_list(members: set[str]) -> list[Any]:
     return [json.loads(m) for m in sorted(members)]
 
 
+# Adjudication kind -> stable, agent-facing outcome label. The `kind` is the
+# internal branch; the `outcome` is what the audit log / explain_fact report.
+_OUTCOME = {
+    "assert_new": "ASSERTED",
+    "corroborate": "CORROBORATED",
+    "supersede": "SUPERSEDED",
+    "update": "SUPERSEDED",
+    "set_extend": "SUPERSEDED",
+    "stale": "REJECTED",       # monotonic earlier observation: recorded, did not win
+    "rejected": "REJECTED",    # lower-authority contradiction: retained as contrary evidence
+    "dispute": "DISPUTED",
+}
+
+
 @dataclass
 class Decision:
-    kind: str                          # assert_new|corroborate|update|stale|set_extend|supersede|dispute
+    kind: str                          # assert_new|corroborate|update|stale|set_extend|supersede|rejected|dispute
     op: str                            # fact_event.op to append: assert|supersede
     repoint_current: bool              # move fact_current.winning_event_id to the new event
     new_current_value: Any = None      # value to store in fact_current when repointing
@@ -52,6 +66,11 @@ class Decision:
     @property
     def is_supersede(self) -> bool:
         return self.op == "supersede"
+
+    @property
+    def outcome(self) -> str:
+        """Stable outcome label (CORROBORATED/SUPERSEDED/REJECTED/DISPUTED/ASSERTED)."""
+        return _OUTCOME.get(self.kind, self.kind.upper())
 
 
 def adjudicate(
@@ -113,20 +132,34 @@ def adjudicate(
 
 
 def _authority_gate(incoming_value, incoming_rank, current_rank, *, reason) -> Decision:
-    """Contradiction resolution: supersede only if incoming STRICTLY outranks."""
+    """Contradiction resolution by predicate-specific authority. Three outcomes:
+
+      * incoming STRICTLY outranks current  -> SUPERSEDE (re-point current).
+      * incoming STRICTLY lower authority    -> REJECTED. The event is retained in
+        the log as CONTRARY evidence, but the current winner is NOT destabilized
+        (a customer's "I'm legitimate" does not overturn a fraud_review
+        confirmation). No dispute.
+      * comparable (equal) authority          -> DISPUTED. Both competing events
+        retained; current status becomes 'disputed'. Recency never breaks the tie
+        (non-monotonic recency supersede is forbidden).
+    """
     if incoming_rank > current_rank:
         return Decision(
             kind="supersede", op="supersede", repoint_current=True,
             new_current_value=incoming_value, new_status="active",
-            notes=f"{reason}; incoming outranks ({incoming_rank}>{current_rank})",
+            notes=f"{reason}; incoming outranks ({incoming_rank}>{current_rank}) -> supersede",
         )
-    # Equal or lower authority -> dispute; retain both competing events.
-    # Recency does NOT break the tie (that would be a non-monotonic recency
-    # supersede, which is forbidden).
+    if incoming_rank < current_rank:
+        return Decision(
+            kind="rejected", op="assert", repoint_current=False,
+            new_status=None, disputed=False,
+            notes=(f"{reason}; incoming lower authority ({incoming_rank}<{current_rank}) "
+                   f"-> rejected (retained as contrary evidence; current unchanged)"),
+        )
     return Decision(
         kind="dispute", op="assert", repoint_current=False,
         new_status="disputed", disputed=True,
-        notes=f"{reason}; incoming does not outrank ({incoming_rank}<={current_rank}) -> dispute",
+        notes=f"{reason}; comparable authority ({incoming_rank}=={current_rank}) -> disputed",
     )
 
 

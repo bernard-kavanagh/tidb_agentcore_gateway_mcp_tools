@@ -26,6 +26,7 @@ from handlers.common.write_control import (  # noqa: E402
     DEFAULT_MIN_CONFIDENCE,
     enforce_write_control_floor,
 )
+from handlers.common.authority import select_authority  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -117,10 +118,16 @@ def test_scalar_equal_authority_disputes_no_recency_supersede():
     assert d.kind == "dispute" and d.op == "assert" and not d.repoint_current and d.disputed
 
 
-def test_scalar_lower_authority_disputes():
+def test_scalar_lower_authority_rejected_not_disputed():
+    # A strictly lower-authority contradiction is REJECTED (retained as contrary
+    # evidence), NOT disputed — the higher-authority winner is not destabilized.
     d = adjudicate(value_type="scalar", incoming_value="Enterprise", current_value="Pro",
                    has_current=True, incoming_rank=40, current_rank=100)
-    assert d.kind == "dispute" and not d.repoint_current and d.disputed
+    assert d.kind == "rejected", d.kind
+    assert d.op == "assert" and not d.repoint_current
+    assert not d.disputed, "lower-authority contradiction must not create a dispute"
+    assert d.new_status is None, "current resolution must be left untouched"
+    assert d.outcome == "REJECTED", d.outcome
 
 
 def test_monotonic_later_supersedes():
@@ -166,6 +173,86 @@ def test_freetext_differ_disputes():
                    has_current=True, incoming_rank=100, current_rank=40)
     # even a higher-rank source does not auto-supersede free text
     assert d.kind == "dispute" and not d.repoint_current and d.disputed
+
+
+# --------------------------------------------------------------------------
+# adjudication outcome labels (agent-facing)
+# --------------------------------------------------------------------------
+def test_outcome_labels():
+    assert adjudicate(value_type="scalar", incoming_value="a", current_value=None,
+                      has_current=False, incoming_rank=40, current_rank=-1).outcome == "ASSERTED"
+    assert adjudicate(value_type="scalar", incoming_value="a", current_value="a",
+                      has_current=True, incoming_rank=40, current_rank=40).outcome == "CORROBORATED"
+    assert adjudicate(value_type="scalar", incoming_value="b", current_value="a",
+                      has_current=True, incoming_rank=100, current_rank=40).outcome == "SUPERSEDED"
+    assert adjudicate(value_type="scalar", incoming_value="b", current_value="a",
+                      has_current=True, incoming_rank=60, current_rank=60).outcome == "DISPUTED"
+    assert adjudicate(value_type="scalar", incoming_value="b", current_value="a",
+                      has_current=True, incoming_rank=20, current_rank=95).outcome == "REJECTED"
+
+
+# --------------------------------------------------------------------------
+# predicate-specific, versioned authority selection (pure)
+# --------------------------------------------------------------------------
+_POLICY_ROWS = [
+    {"predicate": "*", "source": "user_assertion", "authority": 60, "priority": 0,
+     "policy_version": "authority-v1", "effective_from": "1970-01-01 00:00:00.000000",
+     "effective_to": None, "tenant_id": "*"},
+    {"predicate": "fraud_status", "source": "user_assertion", "authority": 20, "priority": 1,
+     "policy_version": "fraud-policy-v1", "effective_from": "1970-01-01 00:00:00.000000",
+     "effective_to": None, "tenant_id": "*"},
+    {"predicate": "fraud_status", "source": "fraud_review", "authority": 95, "priority": 10,
+     "policy_version": "fraud-policy-v1", "effective_from": "1970-01-01 00:00:00.000000",
+     "effective_to": None, "tenant_id": "*"},
+]
+
+
+def test_authority_exact_predicate_beats_wildcard():
+    # user_assertion is 60 globally but only 20 for fraud_status — the specific policy wins.
+    m = select_authority(_POLICY_ROWS, predicate="fraud_status", source="user_assertion")
+    assert m.matched and m.authority == 20 and m.policy_version == "fraud-policy-v1"
+
+
+def test_authority_falls_back_to_wildcard():
+    # A predicate with no specific policy uses the wildcard (legacy) authority.
+    m = select_authority(_POLICY_ROWS, predicate="status", source="user_assertion")
+    assert m.matched and m.authority == 60 and m.policy_version == "authority-v1"
+
+
+def test_authority_no_match_is_lowest_and_unversioned():
+    m = select_authority(_POLICY_ROWS, predicate="fraud_status", source="unknown_source")
+    assert not m.matched and m.authority == 0 and m.policy_version == "unversioned"
+
+
+def test_authority_respects_effective_window():
+    rows = [
+        {"predicate": "status", "source": "s", "authority": 50, "priority": 0,
+         "policy_version": "v1", "effective_from": "2026-01-01 00:00:00.000000",
+         "effective_to": "2026-06-01 00:00:00.000000", "tenant_id": "*"},
+        {"predicate": "status", "source": "s", "authority": 90, "priority": 0,
+         "policy_version": "v2", "effective_from": "2026-06-01 00:00:00.000000",
+         "effective_to": None, "tenant_id": "*"},
+    ]
+    # As-of inside the v1 window resolves to v1; after the cutover resolves to v2.
+    early = select_authority(rows, predicate="status", source="s", as_of="2026-03-01 00:00:00.000000")
+    late = select_authority(rows, predicate="status", source="s", as_of="2026-09-01 00:00:00.000000")
+    assert early.policy_version == "v1" and early.authority == 50
+    assert late.policy_version == "v2" and late.authority == 90
+
+
+def test_authority_tenant_specific_beats_wildcard():
+    rows = [
+        {"predicate": "status", "source": "s", "authority": 50, "priority": 0,
+         "policy_version": "v1", "effective_from": "1970-01-01 00:00:00.000000",
+         "effective_to": None, "tenant_id": "*"},
+        {"predicate": "status", "source": "s", "authority": 80, "priority": 0,
+         "policy_version": "v1-tenantA", "effective_from": "1970-01-01 00:00:00.000000",
+         "effective_to": None, "tenant_id": "tenantA"},
+    ]
+    m = select_authority(rows, predicate="status", source="s", tenant_id="tenantA")
+    assert m.authority == 80 and m.policy_version == "v1-tenantA"
+    other = select_authority(rows, predicate="status", source="s", tenant_id="tenantB")
+    assert other.authority == 50 and other.policy_version == "v1"
 
 
 # --------------------------------------------------------------------------
