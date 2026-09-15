@@ -1,0 +1,12 @@
+{
+  "name": "list_disputes",
+  "description": "List facts currently in a disputed resolution (comparable-authority conflicts) for the caller's tenant: subject, predicate, current value, policy_version, reason. Tenant-scoped; no free-form SQL. tenant_id must equal the caller's identity claim.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "tenant_id": {"type": "string", "description": "Tenant. Must equal the caller's verified tenant_id claim (enforced by Cedar)."},
+      "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Max disputes to return (default 100, capped)."}
+    },
+    "required": ["tenant_id"]
+  }
+}

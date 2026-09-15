@@ -27,6 +27,13 @@ export GATEWAY_ARN=""                        # filled in after the gateway is cr
 export RECORD_FACT_ARN=""
 export VECTOR_SEARCH_ARN=""
 export QUERY_METRICS_ARN=""
+# E->A->R read/write tools (package each handler; record its ARN here).
+export EXPLAIN_FACT_ARN=""
+export GET_FACT_ARN=""
+export GET_FACT_HISTORY_ARN=""
+export LIST_DISPUTES_ARN=""
+export SEARCH_ENTITIES_ARN=""
+export RETRACT_FACT_ARN=""
 
 # Request interceptor Lambda ARN (gateway/interceptor.py, deployed as its own function).
 # Runs before Cedar; injects identity + tenant-scoped credential. Required by deploy.sh.

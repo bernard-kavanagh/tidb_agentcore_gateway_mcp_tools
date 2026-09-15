@@ -18,6 +18,13 @@ ACTIONS = {
     "RecordFact___record_fact",
     "VectorSearch___vector_search",
     "QueryTenantMetrics___query_tenant_metrics",
+    # E->A->R read/write tools (same param-vs-claim isolation rule).
+    "ExplainFact___explain_fact",
+    "GetFact___get_fact",
+    "GetFactHistory___get_fact_history",
+    "ListDisputes___list_disputes",
+    "SearchEntities___search_entities",
+    "RetractFact___retract_fact",
 }
 
 
@@ -101,6 +108,31 @@ CASES = [
         "action": "SomethingElse___do_it",
         "principal_tags": {"tenant_id": "acme"},
         "context": {"input": {"tenant_id": "acme"}},
+    }),
+    ("explain_fact matching tenant -> Allow", "Allow", {
+        "action": "ExplainFact___explain_fact",
+        "principal_tags": {"tenant_id": "acme"},
+        "context": {"input": {"tenant_id": "acme", "subject": "s", "predicate": "fraud_status"}},
+    }),
+    ("explain_fact cross-tenant -> Deny (isolation)", "Deny", {
+        "action": "ExplainFact___explain_fact",
+        "principal_tags": {"tenant_id": "acme"},
+        "context": {"input": {"tenant_id": "globex", "subject": "s", "predicate": "fraud_status"}},
+    }),
+    ("retract_fact cross-tenant -> Deny (isolation)", "Deny", {
+        "action": "RetractFact___retract_fact",
+        "principal_tags": {"tenant_id": "acme"},
+        "context": {"input": {"tenant_id": "globex", "subject": "s", "predicate": "fraud_status", "source": "human_investigator"}},
+    }),
+    ("list_disputes matching tenant -> Allow", "Allow", {
+        "action": "ListDisputes___list_disputes",
+        "principal_tags": {"tenant_id": "acme"},
+        "context": {"input": {"tenant_id": "acme"}},
+    }),
+    ("search_entities cross-tenant -> Deny (isolation)", "Deny", {
+        "action": "SearchEntities___search_entities",
+        "principal_tags": {"tenant_id": "acme"},
+        "context": {"input": {"tenant_id": "globex", "query": "x"}},
     }),
 ]
 

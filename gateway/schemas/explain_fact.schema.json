@@ -1,0 +1,13 @@
+{
+  "name": "explain_fact",
+  "description": "Explain WHY the current fact is what it is for (tenant_id, subject, predicate): current resolution (value, status, policy_version, reason, validity window), the winning source + authority, supporting and CONTRARY evidence references, assessments, superseded/rejected/disputed prior assertions, and the outcome history. Optimized for agent consumption. tenant_id must equal the caller's identity claim.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "tenant_id": {"type": "string", "description": "Tenant. Must equal the caller's verified tenant_id claim (enforced by Cedar)."},
+      "subject": {"type": "string", "description": "The subject/entity key the fact is about."},
+      "predicate": {"type": "string", "description": "The predicate (e.g. fraud_status, status)."}
+    },
+    "required": ["tenant_id", "subject", "predicate"]
+  }
+}

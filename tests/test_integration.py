@@ -41,15 +41,38 @@ def _event(tenant, **overrides):
 
 
 def _wire_stubs():
-    """Point the handler at the test engine and stub Bedrock/Secrets."""
+    """Point every handler at the test engine and stub Bedrock/Secrets."""
     from sqlalchemy import create_engine
-    from handlers import record_fact as rf
+    from handlers import (record_fact as rf, get_fact, explain_fact,
+                          get_fact_history, list_disputes, search_entities,
+                          retract_fact)
     from handlers.common import embeddings
 
     engine = create_engine(TIDB_TEST_URL, pool_pre_ping=True, future=True)
-    rf.get_engine = lambda _arn: engine                          # bypass Secrets Manager
+    for mod in (rf, get_fact, explain_fact, get_fact_history, list_disputes,
+                search_entities, retract_fact):
+        mod.get_engine = lambda _arn, _e=engine: _e            # bypass Secrets Manager
     embeddings.embed = lambda _text: [0.0] * embeddings.EMBED_DIM  # bypass Bedrock
     return rf, engine
+
+
+def _read_mods():
+    from handlers import get_fact, explain_fact
+    return get_fact, explain_fact
+
+
+def test_cross_tenant_read_isolation(rf):
+    # Defense in depth BEHIND Cedar: even if a handler runs, its tenant-scoped
+    # WHERE means tenant B cannot see tenant A's fact.
+    get_fact, explain_fact = _read_mods()
+    subj = "xtenant-" + os.urandom(6).hex()
+    rf.handler(_event("itest-a", subject=subj, source="system_of_record"))
+    # tenant B asks for tenant A's subject -> not found (never leaks).
+    ev_b = {"_fact_ctx": {"tenant_id": "itest-b", "agent_id": "a",
+                          "session_id": "s", "tenant_secret_arn": "stub"},
+            "subject": subj, "predicate": "status"}
+    assert get_fact.handler(ev_b).get("error_type") == "NotFound"
+    assert explain_fact.handler(ev_b).get("error_type") == "NotFound"
 
 
 def test_idempotent_write_replays(rf):
@@ -80,6 +103,7 @@ TESTS = [
     test_idempotent_write_replays,
     test_distinct_idempotency_keys_create_distinct_events,
     test_no_key_is_not_idempotent,
+    test_cross_tenant_read_isolation,
 ]
 
 

@@ -32,6 +32,12 @@ require RECORD_FACT_ARN
 require VECTOR_SEARCH_ARN
 require QUERY_METRICS_ARN
 require INTERCEPTOR_LAMBDA_ARN
+require EXPLAIN_FACT_ARN
+require GET_FACT_ARN
+require GET_FACT_HISTORY_ARN
+require LIST_DISPUTES_ARN
+require SEARCH_ENTITIES_ARN
+require RETRACT_FACT_ARN
 
 echo "== 1. Create the fact layer's own Gateway (JWT inbound, dedicated Cognito client) =="
 run agentcore add gateway \
@@ -49,6 +55,27 @@ run agentcore add gateway-target --type lambda-function-arn --name VectorSearch 
   --gateway "$GATEWAY_NAME"
 run agentcore add gateway-target --type lambda-function-arn --name QueryTenantMetrics \
   --lambda-arn "$QUERY_METRICS_ARN" --tool-schema-file gateway/schemas/query_tenant_metrics.schema.json \
+  --gateway "$GATEWAY_NAME"
+
+# E->A->R read/write tools. Target names drive the Cedar action names
+# (<targetName>___<toolName>) — keep in sync with cedar/tenant_isolation.cedar.
+run agentcore add gateway-target --type lambda-function-arn --name ExplainFact \
+  --lambda-arn "$EXPLAIN_FACT_ARN" --tool-schema-file gateway/schemas/explain_fact.schema.json \
+  --gateway "$GATEWAY_NAME"
+run agentcore add gateway-target --type lambda-function-arn --name GetFact \
+  --lambda-arn "$GET_FACT_ARN" --tool-schema-file gateway/schemas/get_fact.schema.json \
+  --gateway "$GATEWAY_NAME"
+run agentcore add gateway-target --type lambda-function-arn --name GetFactHistory \
+  --lambda-arn "$GET_FACT_HISTORY_ARN" --tool-schema-file gateway/schemas/get_fact_history.schema.json \
+  --gateway "$GATEWAY_NAME"
+run agentcore add gateway-target --type lambda-function-arn --name ListDisputes \
+  --lambda-arn "$LIST_DISPUTES_ARN" --tool-schema-file gateway/schemas/list_disputes.schema.json \
+  --gateway "$GATEWAY_NAME"
+run agentcore add gateway-target --type lambda-function-arn --name SearchEntities \
+  --lambda-arn "$SEARCH_ENTITIES_ARN" --tool-schema-file gateway/schemas/search_entities.schema.json \
+  --gateway "$GATEWAY_NAME"
+run agentcore add gateway-target --type lambda-function-arn --name RetractFact \
+  --lambda-arn "$RETRACT_FACT_ARN" --tool-schema-file gateway/schemas/retract_fact.schema.json \
   --gateway "$GATEWAY_NAME"
 
 echo "== 3. Attach the request interceptor (runs before Cedar) =="

@@ -44,3 +44,74 @@ permit(
   && context.input has tenant_id
   && context.input.tenant_id == principal.getTag("tenant_id")
 };
+
+// --- E->A->R read/write tools (same param-vs-claim tenant isolation) ---
+// Every one of these tools takes tenant_id in its input, so the identical rule
+// governs them. Target names must match deploy.sh: ExplainFact / GetFact /
+// GetFactHistory / ListDisputes / SearchEntities / RetractFact.
+
+permit(
+  principal is AgentCore::OAuthUser,
+  action == AgentCore::Action::"ExplainFact___explain_fact",
+  resource == AgentCore::Gateway::"<GATEWAY_ARN>"
+) when {
+  principal.hasTag("tenant_id")
+  && context has input
+  && context.input has tenant_id
+  && context.input.tenant_id == principal.getTag("tenant_id")
+};
+
+permit(
+  principal is AgentCore::OAuthUser,
+  action == AgentCore::Action::"GetFact___get_fact",
+  resource == AgentCore::Gateway::"<GATEWAY_ARN>"
+) when {
+  principal.hasTag("tenant_id")
+  && context has input
+  && context.input has tenant_id
+  && context.input.tenant_id == principal.getTag("tenant_id")
+};
+
+permit(
+  principal is AgentCore::OAuthUser,
+  action == AgentCore::Action::"GetFactHistory___get_fact_history",
+  resource == AgentCore::Gateway::"<GATEWAY_ARN>"
+) when {
+  principal.hasTag("tenant_id")
+  && context has input
+  && context.input has tenant_id
+  && context.input.tenant_id == principal.getTag("tenant_id")
+};
+
+permit(
+  principal is AgentCore::OAuthUser,
+  action == AgentCore::Action::"ListDisputes___list_disputes",
+  resource == AgentCore::Gateway::"<GATEWAY_ARN>"
+) when {
+  principal.hasTag("tenant_id")
+  && context has input
+  && context.input has tenant_id
+  && context.input.tenant_id == principal.getTag("tenant_id")
+};
+
+permit(
+  principal is AgentCore::OAuthUser,
+  action == AgentCore::Action::"SearchEntities___search_entities",
+  resource == AgentCore::Gateway::"<GATEWAY_ARN>"
+) when {
+  principal.hasTag("tenant_id")
+  && context has input
+  && context.input has tenant_id
+  && context.input.tenant_id == principal.getTag("tenant_id")
+};
+
+permit(
+  principal is AgentCore::OAuthUser,
+  action == AgentCore::Action::"RetractFact___retract_fact",
+  resource == AgentCore::Gateway::"<GATEWAY_ARN>"
+) when {
+  principal.hasTag("tenant_id")
+  && context has input
+  && context.input has tenant_id
+  && context.input.tenant_id == principal.getTag("tenant_id")
+};
