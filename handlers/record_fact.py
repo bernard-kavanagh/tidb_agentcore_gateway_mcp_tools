@@ -29,6 +29,7 @@ import json
 from datetime import datetime, timezone
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from .common import context, embeddings
 from .common.adjudication import adjudicate
@@ -47,6 +48,11 @@ def _utc_now_str() -> str:
     # Naive UTC, microsecond precision. This exact string is both hashed and
     # stored in fact_event.observed_at DATETIME(6) so the hash is reproducible.
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+class _IdempotentReplay(Exception):
+    """Raised inside the write txn when the idempotency key is already claimed, to
+    roll back this attempt so the original committed result can be replayed."""
 
 
 def handler(event, _lambda_context=None):
@@ -69,6 +75,7 @@ def handler(event, _lambda_context=None):
         arg_valid_from = args.get("valid_from")
         arg_valid_to = args.get("valid_to")
         arg_asserted_at = args.get("asserted_at")
+        idempotency_key = args.get("idempotency_key")
         evidence = args.get("evidence") or []
         if not isinstance(evidence, list):
             raise ValueError("evidence must be a list of {evidence_type, evidence_ref, ...}")
@@ -83,6 +90,20 @@ def handler(event, _lambda_context=None):
 
     tenant = ctx.tenant_id
     engine = get_engine(ctx.tenant_secret_arn)
+
+    # Idempotent replay (fast path, no txn): if this key already produced a
+    # result, return it verbatim so a retry never re-does the work.
+    if idempotency_key:
+        with engine.connect() as probe:
+            prior = probe.execute(
+                text("SELECT result_json FROM fact_idempotency "
+                     "WHERE tenant_id=:t AND idempotency_key=:k"),
+                {"t": tenant, "k": idempotency_key},
+            ).first()
+        if prior is not None and prior.result_json:
+            res = json.loads(prior.result_json)
+            res["idempotent_replay"] = True
+            return res
 
     # Embed the subject OUTSIDE the transaction if it looks new, so the Bedrock
     # round-trip never happens while holding the subject row lock.
@@ -102,6 +123,20 @@ def handler(event, _lambda_context=None):
 
     try:
         with engine.begin() as cx:
+            # Claim the idempotency key FIRST, atomically with the write. A
+            # concurrent duplicate blocks on the key here, then fails duplicate-key
+            # once the winner commits -> this whole txn rolls back (no duplicate
+            # event) and the committed result is replayed below.
+            if idempotency_key:
+                try:
+                    cx.execute(
+                        text("INSERT INTO fact_idempotency (tenant_id, idempotency_key) "
+                             "VALUES (:t, :k)"),
+                        {"t": tenant, "k": idempotency_key},
+                    )
+                except IntegrityError:
+                    raise _IdempotentReplay()
+
             # --- predicate must be declared in the registry (rule-driven) ---
             value_type = cx.execute(
                 text("SELECT value_type FROM predicate_rule WHERE predicate=:p"),
@@ -291,18 +326,43 @@ def handler(event, _lambda_context=None):
                 # evidence; the resolution row is intentionally left untouched.
                 status = cur.status
 
-        return {
-            "event_id": event_id,
-            "status": status,
-            "decision": d.kind,
-            "outcome": d.outcome,
-            "op": d.op,
-            "policy_version": policy_version,
-            "subject_id": subject_id,
-            "entity_id": resolved_entity_id,
-            "evidence_count": len(evidence),
-            "competing_event_ids": competing,
-        }
+            result = {
+                "event_id": event_id,
+                "status": status,
+                "decision": d.kind,
+                "outcome": d.outcome,
+                "op": d.op,
+                "policy_version": policy_version,
+                "subject_id": subject_id,
+                "entity_id": resolved_entity_id,
+                "evidence_count": len(evidence),
+                "competing_event_ids": competing,
+            }
+            # Record the result against the claimed key, in the SAME txn, so a
+            # retry replays it and a crash never leaves a claimed-but-empty key.
+            if idempotency_key:
+                cx.execute(
+                    text("UPDATE fact_idempotency SET event_id=:e, result_json=:r "
+                         "WHERE tenant_id=:t AND idempotency_key=:k"),
+                    {"e": event_id, "r": json.dumps(result),
+                     "t": tenant, "k": idempotency_key},
+                )
+
+        return result
+    except _IdempotentReplay:
+        with engine.connect() as probe:
+            prior = probe.execute(
+                text("SELECT result_json FROM fact_idempotency "
+                     "WHERE tenant_id=:t AND idempotency_key=:k"),
+                {"t": tenant, "k": idempotency_key},
+            ).first()
+        if prior is not None and prior.result_json:
+            res = json.loads(prior.result_json)
+            res["idempotent_replay"] = True
+            return res
+        # Claim committed but result not yet visible (shouldn't happen: both are one
+        # txn) — surface a retryable conflict rather than risk a duplicate.
+        return {"error": "idempotency key in progress; retry", "error_type": "Conflict"}
     except ValueError as e:
         return {"error": str(e), "error_type": "ValueError"}
 

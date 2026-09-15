@@ -58,6 +58,10 @@
         "type": "string",
         "description": "Optional ISO-8601 time the assertion was made (defaults to observed_at)."
       },
+      "idempotency_key": {
+        "type": "string",
+        "description": "Optional. A retried logical write with the same (tenant, idempotency_key) replays the original result instead of appending a duplicate event. Enforced at the database level."
+      },
       "evidence": {
         "type": "array",
         "description": "Optional references back to fraud-domain observations (references, never copies).",

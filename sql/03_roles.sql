@@ -32,6 +32,7 @@ GRANT SELECT, INSERT, UPDATE ON <DB>.fact_current     TO '<FACT_ROLE>'@'%';
 GRANT SELECT, INSERT, UPDATE ON <DB>.entity           TO '<FACT_ROLE>'@'%';  -- resolve-or-create canonical entities
 GRANT SELECT, INSERT         ON <DB>.entity_alias     TO '<FACT_ROLE>'@'%';
 GRANT SELECT, INSERT         ON <DB>.fact_evidence    TO '<FACT_ROLE>'@'%';  -- append evidence references
+GRANT SELECT, INSERT, UPDATE ON <DB>.fact_idempotency TO '<FACT_ROLE>'@'%';  -- retry-safe writes
 GRANT SELECT                 ON <DB>.predicate_rule   TO '<FACT_ROLE>'@'%';
 GRANT SELECT                 ON <DB>.source_rank      TO '<FACT_ROLE>'@'%';  -- legacy/reference
 GRANT SELECT                 ON <DB>.authority_policy TO '<FACT_ROLE>'@'%';  -- predicate-specific authority (adjudication)
