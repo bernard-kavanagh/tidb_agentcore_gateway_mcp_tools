@@ -62,6 +62,10 @@
         "type": "string",
         "description": "Optional. A retried logical write with the same (tenant, idempotency_key) replays the original result instead of appending a duplicate event. Enforced at the database level."
       },
+      "context_summary": {
+        "type": "string",
+        "description": "Optional short natural-language context (e.g. investigation summary) folded into the subject's semantic embedding to improve institutional recall. Not stored as a domain-record copy."
+      },
       "evidence": {
         "type": "array",
         "description": "Optional references back to fraud-domain observations (references, never copies).",

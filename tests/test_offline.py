@@ -32,6 +32,8 @@ from handlers.common.entity import (  # noqa: E402
     normalize_assessor_type,
     normalize_relationship,
 )
+from handlers.common.embeddings import build_embedding_text  # noqa: E402
+from handlers.common.observability import log_event  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -311,6 +313,40 @@ def test_assessor_type_validation():
         pass
     else:
         raise AssertionError("invalid assessor_type must raise")
+
+
+# --------------------------------------------------------------------------
+# semantic representation (embedded text) + observability redaction (pure)
+# --------------------------------------------------------------------------
+def test_embedding_text_is_normalized_and_deterministic():
+    a = build_embedding_text(subject="customer:42", predicate="fraud_status",
+                             value="confirmed", entity_type="customer",
+                             context_summary="6 chargebacks, device reuse")
+    b = build_embedding_text(subject="customer:42", predicate="fraud_status",
+                             value="confirmed", entity_type="customer",
+                             context_summary="6 chargebacks, device reuse")
+    assert a == b, "embedding text must be deterministic"
+    assert "customer" in a and "fraud_status = confirmed" in a and "chargebacks" in a
+    assert a != "customer:42", "must embed a representation, not the raw subject id"
+
+
+def test_embedding_text_omits_missing_parts():
+    assert build_embedding_text(subject="s", predicate="p", value="v") == "s | p = v"
+
+
+def test_observability_drops_sensitive_fields():
+    import contextlib
+    import io
+    import json
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        log_event("record_fact", tenant_id="acme", outcome="SUPERSEDED",
+                  value="SECRET_VALUE", subject="john@example.com", password="x")
+    rec = json.loads(buf.getvalue().strip())
+    assert rec["event"] == "record_fact" and rec["tenant_id"] == "acme"
+    assert rec["outcome"] == "SUPERSEDED"
+    for denied in ("value", "subject", "password"):
+        assert denied not in rec, f"{denied} must never be logged"
 
 
 # --------------------------------------------------------------------------

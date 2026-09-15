@@ -11,15 +11,37 @@ import json
 import os
 from functools import lru_cache
 
-import boto3
-
 _REGION = os.environ.get("AWS_REGION", "eu-central-1")
 _MODEL_ID = os.environ.get("EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0")
 EMBED_DIM = int(os.environ.get("EMBED_DIM", "1024"))
 
 
+def build_embedding_text(*, subject: str, predicate: str, value,
+                         entity_type: str | None = None,
+                         context_summary: str | None = None) -> str:
+    """Normalized, DETERMINISTIC semantic representation to embed for recall.
+
+    We embed a normalized "<entity_type> | <subject> | <predicate> = <value> |
+    <context>" string rather than the raw subject id, so semantic search retrieves
+    relevant institutional knowledge (similar entities / predicates / conclusions),
+    not just literal id matches. Deterministic so embeddings are repeatable in tests.
+    Pure/stdlib-only (boto3 is imported lazily below), so it is unit-testable.
+    """
+    val = value if isinstance(value, str) else json.dumps(value, sort_keys=True,
+                                                          separators=(",", ":"),
+                                                          ensure_ascii=False)
+    parts = [
+        (str(entity_type) if entity_type else None),
+        str(subject),
+        f"{predicate} = {val}",
+        (str(context_summary) if context_summary else None),
+    ]
+    return " | ".join(p for p in parts if p)
+
+
 @lru_cache(maxsize=1)
 def _client():
+    import boto3  # lazy: keeps build_embedding_text importable without boto3
     return boto3.client("bedrock-runtime", region_name=_REGION)
 
 

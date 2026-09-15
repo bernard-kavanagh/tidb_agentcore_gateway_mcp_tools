@@ -1,91 +1,195 @@
-# TiDB Governed Fact Layer — Phase A
+# TiDB Governed Fact Layer
 
-A governed fact-of-record service for AI agents: facts are written through a
-**deterministic adjudication path** into TiDB and served as tool handlers behind
-an Amazon Bedrock AgentCore Gateway, with **per-tenant Cedar isolation** enforced
-before any query runs and a **tamper-evident audit log** (per-subject hash chain)
-of every change.
+A governed **fact-of-record** service for AI agents: durable assertions written
+through a **deterministic adjudication path** into TiDB and served as typed tool
+handlers behind an Amazon Bedrock **AgentCore Gateway**, with **per-tenant Cedar
+isolation** enforced before any query runs and a **tamper-evident, append-only
+audit log** of every change.
 
-See `SPEC.md` for the full build spec and `CLAUDE.md` for the guardrails.
+It is the institutional memory for the [`fraud_on-aws`](https://github.com/bernard-kavanagh/fraud_on-aws)
+fraud architecture — but it is domain-neutral and knows nothing about fraud.
 
-## Confirmed build decisions (v1)
+> Guardrails: `CLAUDE.md`. Original Phase-A build spec: `SPEC.md`.
 
-| Decision | Choice |
-|---|---|
-| Hash-chain scope | **Per-subject** — chain tip tracked on `fact_subject.last_event_hash`; the write path `SELECT ... FOR UPDATE`s that row to serialize per-subject writes |
-| Embedding | **Titan Text Embeddings V2 @ 1024** → `VECTOR(1024)`, cosine distance |
-| Predicates | `status` (scalar), `last_seen` (monotonic), `known_aliases` (set), `notes` (freetext) |
-| Source ranks | system_of_record=100, verified_integration=80, user_assertion=60, agent_inference=40 |
+## 1. The problem
 
-## Layout
+An agent that investigates the same customer twice re-derives everything from
+scratch: it has no durable, trustworthy memory of what was already concluded, by
+whom, on what evidence, or how a conflict was resolved. Ordinary "agent memory"
+(a blob store, or a flat vector table of past turns) is insufficient here because
+a fraud conclusion is **governed data**: it needs provenance, authority, temporal
+validity, contradiction handling, and an audit trail — not just recall.
+
+## 2. Evidence → Assessment → Resolution
+
+The core distinction this service enforces:
+
+| Concept | Question | Here it is |
+|---|---|---|
+| **Evidence** | "Why?" | a REFERENCE back to a fraud-domain observation (transaction, alert, investigation, model run, chargeback…). Never a copy. |
+| **Assessment** | "What do we think?" | an assertion by a source/assessor, with confidence, at a time — one `fact_event`. |
+| **Resolution** | "What do we currently believe, and how was it decided?" | the current truth (`fact_current`) + the reason + the authority **policy version** that produced it. |
+
+An agent inference is an **assessment**; it does NOT automatically become a
+confirmed **resolution**. Confirmation requires an authoritative source under the
+authority policy.
+
+## 3. Architecture
 
 ```
-sql/
-  01_schema.sql          5 tables; AUTO_RANDOM PKs; inline HNSW index; TiFlash replicas
-  02_seed.sql            predicate_rule + source_rank starter rows
-  03_roles.sql           tenant-scoped role + resource control group (append-only grants)
-handlers/
-  common/                secrets-by-ARN, SQLAlchemy engine, hashing/chain, embeddings, context, adjudication
-  record_fact.py         the ACID write path + contradiction test
-  vector_search.py       typed semantic recall (tenant-scoped)
-  query_tenant_metrics.py enumerated named metrics only
-gateway/
-  schemas/*.schema.json  tool inputSchemas (type:object at top, no json wrapper)
-  interceptor.py         pre-Cedar request interceptor (inject identity + tenant-scoped cred)
-cedar/
-  tenant_isolation.cedar param-vs-claim permits, ENFORCE deny-by-default
-  policy_eval.py         offline policy evaluation (deploy-confirm A)
-deploy/
-  env.example.sh         operator inputs (ARNs/IDs/URLs only — no secrets)
-  deploy.sh              gateway + targets + interceptor + policy (dry-run by default)
-tests/
-  test_offline.py        adjudication + hash-chain tests (no live cluster)
+Caller (agent / test client)
+   │  Cognito JWT (tenant_id is a first-class claim)
+   ▼
+AgentCore Gateway ── request interceptor (inject verified identity + tenant-scoped cred)
+   │                        ▼
+   │                     Cedar (ENFORCE, deny-by-default) — param-vs-claim tenant isolation
+   ▼
+Typed Lambda tools ──────────────────────────────────────────────────────────
+   record_fact · explain_fact · get_fact · get_fact_history ·
+   list_disputes · search_entities · retract_fact · vector_search · query_tenant_metrics
+   ▼
+TiDB (SQLAlchemy/PyMySQL, secret-by-ARN, tenant-scoped role)
+   entity · fact_subject · fact_event (append-only, hash-chained) · fact_current ·
+   fact_evidence · authority_policy · predicate_rule · fact_idempotency
 ```
 
-## What is verified now (no cluster needed)
+Enforcement order is **interceptor → Cedar → tool**; a denied call never reaches TiDB.
+
+## 4. Authority policy (predicate-specific, versioned)
+
+Authority is **not** global. A source's authority depends on *what* it asserts:
+a chargeback processor is authoritative for `chargeback`, a fraud reviewer/human
+for `fraud_status`, a customer is *low* authority for `fraud_status`. This lives
+in `authority_policy` (`predicate × source × tenant × time → authority`,
+versioned). The adjudicator asks "how authoritative is this source **for this
+predicate**?" (`handlers/common/authority.py`). Wildcard (`predicate='*'`) rows
+preserve the legacy global ranks for predicates without a specific policy.
+
+Every resolution records the `policy_version` that produced it, so a historical
+resolution is **never silently recomputed** under a newer policy.
+
+## 5. Adjudication (deterministic, explicit outcomes)
+
+`handlers/common/adjudication.py` (pure, rule-based) yields explicit outcomes:
+
+- **CORROBORATED** — same value; recall keeps prior events.
+- **SUPERSEDED** — a strictly higher-authority contradiction re-points current truth (prior event retained).
+- **REJECTED** — a strictly *lower*-authority contradiction is retained as **contrary evidence** and does **not** destabilize the winner (a customer's "I'm legitimate" does not overturn a fraud_review confirmation).
+- **DISPUTED** — comparable-authority contradiction; both retained; status becomes `disputed`. Recency never breaks the tie (recency supersedes only for `monotonic` predicates).
+- **RETRACTED** — explicit lifecycle retraction (`retract_fact`).
+
+## 6. Provenance & evidence
+
+Assertions carry `source`, `assessor_type` (human/system/model/agent/user), and
+`confidence`, and can attach `fact_evidence` references
+(SUPPORTS/CONTRADICTS/DERIVED_FROM/TRIGGERED_BY/REVIEWED_IN) pointing back to the
+fraud system by id. `explain_fact` reassembles all of it — current value,
+authority, supporting vs contrary evidence, assessments, superseded/disputed
+assertions, and outcome history — so an agent can answer *"why do we believe this?"*.
+
+## 7. Temporal semantics
+
+Four distinct times, not one: `valid_from`/`valid_to` (when the fact is true in
+the real world), `asserted_at` (when the claim was made), `observed_at` (source
+observation), `ingested_at` (system clock). The first three are **material** and
+folded into the hash chain; `ingested_at` is bookkeeping and is not.
+
+## 8. Tenant isolation & security
+
+`Cognito JWT → interceptor (verified tenant_id) → Cedar (param-vs-claim) →
+tenant-scoped tool → tenant-scoped TiDB role`. `tenant_id` is compared literally
+in Cedar and must arrive as a first-class claim; the LLM-supplied value is never
+trusted (the handler asserts arg == verified claim as defense in depth, and every
+query is tenant-scoped). Authorization (Cedar) is kept separate from adjudication
+(what happens to an assertion).
+
+## 9. MCP tools (typed; no free-form SQL)
+
+| Tool | Kind | Purpose |
+|---|---|---|
+| `record_fact` | write | governed assert + adjudication (idempotent via `idempotency_key`) |
+| `retract_fact` | write | explicit retraction (append-only, hash-chained) |
+| `explain_fact` | read | full provenance for the current fact (priority tool) |
+| `get_fact` | read | current resolved value/status |
+| `get_fact_history` | read | append-only event lineage |
+| `list_disputes` | read | facts in a disputed resolution |
+| `search_entities` | read | canonical entity lookup |
+| `vector_search` | read | semantic recall (server-side Titan V2 embedding) |
+| `query_tenant_metrics` | read | enumerated named metrics only |
+
+There is deliberately **no `execute_sql`/generic query tool** — the LLM never gets raw SQL.
+
+## 10. TiDB's role
+
+One TiDB cluster is the OLTP store (write path), the analytical engine (TiFlash
+replica for audit/metrics rollups), and the vector index (HNSW on
+`fact_subject.subject_vec`, cosine, Titan Text Embeddings V2 @ 1024). Subjects are
+embedded as a **normalized representation** (`entity | subject | predicate = value
+| context`), not the raw id, so semantic recall finds relevant institutional
+knowledge. No separate vector database.
+
+## 11. Example (fraud investigation memory)
+
+```
+record_fact(tenant, subject="customer:123", predicate="fraud_status",
+            value="confirmed", source="human_investigator", assessor_type="human",
+            confidence=0.98,
+            evidence=[{"evidence_type":"investigation","evidence_ref":"INV-847"},
+                      {"evidence_type":"chargeback","evidence_ref":"CB-991"}],
+            valid_from="2026-03-01T00:00:00Z", idempotency_key="inv-847-final")
+# → SUPERSEDED/ASSERTED under fraud-policy-v1
+
+# later investigation:
+explain_fact(tenant, "customer:123", "fraud_status")
+# → current=confirmed, authority=human_investigator/fraud-policy-v1,
+#   supporting_evidence=[INV-847, CB-991], contrary_evidence=[...customer said legitimate...],
+#   history=[ASSESSED, CONFIRMED]
+```
+
+A later **lower-authority** contrary assertion (`user_assertion: legitimate`) is
+**REJECTED** (retained as contrary evidence, `confirmed` stands). Two
+**comparable-authority** contradictions **DISPUTE**.
+
+## 12. Deployment
+
+1. `cp deploy/env.example.sh deploy/env.sh`; fill region, TiDB secret ARN, Cognito
+   discovery URL + client IDs, gateway name, and Lambda ARNs. Cognito must mint
+   `tenant_id` as a first-class claim.
+2. Apply schema in order: `sql/01_schema.sql`, then migrations `04`→`07`, then
+   `sql/02_seed.sql`, then `sql/03_roles.sql` (store the role password in the
+   Secrets Manager secret; never in SQL).
+3. Package the handlers (`handlers/` + `requirements.txt`) as Lambdas; record ARNs.
+4. `bash deploy/deploy.sh` (dry-run) → verify AgentCore CLI flags → re-run with `DEPLOY_FOR_REAL=1`.
+
+## 13. Testing
 
 ```bash
-python3 tests/test_offline.py     # 17/17: contradiction test (all 4 value_types + authority gate) + hash chain
-python3 cedar/policy_eval.py      # 6/6: tenant isolation permits, incl. cross-tenant deny + deploy-confirm A logic
+python3 tests/test_offline.py     # 34/34: adjudication (all outcomes), authority selection,
+                                  #        canonical keys, temporal hashing, embedding text,
+                                  #        observability redaction, hash chain, write control
+python3 cedar/policy_eval.py      # 11/11: tenant-isolation permits incl. cross-tenant deny
+TIDB_TEST_URL=... python3 tests/test_integration.py   # idempotency + cross-tenant read
+                                  # isolation against a live TiDB (SKIPs without a cluster)
 ```
 
-The deterministic adjudication and the tamper-evidence are provable without
-infrastructure — that is the moat, and it is green.
+The deterministic adjudication, authority selection, tamper-evidence, and Cedar
+isolation logic are provable **offline**. Behaviors that touch TiDB
+(idempotency, cross-tenant data scoping, the full write path) require a live
+cluster via `$TIDB_TEST_URL` and are gated so CI never falsely reports them.
 
-## Deploy (needs operator env inputs)
+## 14. Known limitations
 
-1. `cp deploy/env.example.sh deploy/env.sh` and fill in region, TiDB host/secret ARN,
-   Cognito discovery URL + client IDs, gateway name. **Token requirement (hard):**
-   the Cognito app client must mint `tenant_id` as a first-class JWT claim before
-   the Cedar step, or the isolation rule cannot be written.
-2. Apply schema + seed + role to the cluster:
-   `mysql ... < sql/01_schema.sql && mysql ... < sql/02_seed.sql && mysql ... < sql/03_roles.sql`
-   (store the role's password in the Secrets Manager secret; never in the SQL).
-3. Package & deploy the four Lambdas (`handlers/` + `requirements.txt`), record their ARNs in `env.sh`.
-4. `bash deploy/deploy.sh` (dry-run). Verify the AgentCore CLI flags against
-   `agentcore --help`, then re-run with `DEPLOY_FOR_REAL=1`.
-
-## Acceptance tests → how each is exercised
-
-| # | Test | How |
-|---|---|---|
-| 1 | Write + read | `record_fact` on a new `(tenant,subject,predicate)` → 1 `fact_event` + 1 `fact_current` in one txn; `vector_search` returns it |
-| 2 | Adjudication | higher-authority contradiction → `supersede` event, `fact_current` re-points, prior event stays, chain verifies (`test_offline` covers the logic; live path exercises the txn) |
-| 3 | Corroboration | agreeing assert appends + keeps prior events; subject history > 1 event |
-| 4 | Dispute | equal/lower-authority contradiction → `fact_current.status='disputed'`, both events retained |
-| 5 | Tenant isolation | cross-tenant `context.input.tenant_id` denied by Cedar; deny in CloudWatch policy log; TiDB never queried (`policy_eval.py` pre-checks the logic) |
-| 6 | Deploy-confirm A | `context.input.tenant_id` populates for the tool call (offline pre-check in `policy_eval.py`; confirm on the live gateway) |
-| 7 | Deploy-confirm B | interceptor-injected tenant-scoped credential opens the correct TiDB session end to end |
-
-Tests 2–6 are verified at the logic level now; 1–7 complete against the live
-gateway + cluster once env inputs are supplied.
-
-## Non-negotiables honoured
-
-- `AUTO_RANDOM` on every clustered PK — never `AUTO_INCREMENT`.
-- `fact_current` upserted in the **same transaction** as the `fact_event` append (no materialized view).
-- `fact_event` append-only; corrections/retractions are new events; hash-chained (tamper-evident, not immutable). The role holds no `UPDATE`/`DELETE` on it.
-- Secrets by ARN only; no secret material in env or code.
-- No free-form SQL surface; reads typed and enumerated.
-- Adjudication deterministic and rule-based; recency supersedes **only** for `monotonic`.
-- `tenant_id` compared literally in Cedar against a first-class JWT claim.
+- **Hash chain = tamper-EVIDENT, not immutable.** It detects mutation/reordering
+  of the append-only log; it is not an external immutable ledger. An external
+  anchor (e.g. periodic digest to a WORM store) is an optional production
+  extension, not built here.
+- **Confidence is not a calibrated probability** unless the source establishes
+  one. Name model outputs appropriately (`model_score`/`risk_score`) in metadata;
+  do not combine correlated model outputs as independent evidence.
+- **Entity resolution is deterministic canonical keying**, not identity
+  resolution — the service does not decide whether two customers are the same
+  person unless asked to assert it.
+- **No reconciliation queue / evidence-weighted mode / confidence decay** —
+  single-mode adjudication only; those remain POC-phase design decisions.
+- Integration/concurrency tests require a live TiDB; they were not executed in
+  the environment that produced this revision.

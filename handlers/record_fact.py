@@ -26,6 +26,7 @@ caller.
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -35,6 +36,7 @@ from .common import context, embeddings
 from .common.adjudication import adjudicate
 from .common.authority import resolve_authority
 from .common.db import get_engine
+from .common.observability import correlation_id, log_event
 from .common.entity import (
     normalize_assessor_type,
     normalize_relationship,
@@ -56,6 +58,7 @@ class _IdempotentReplay(Exception):
 
 
 def handler(event, _lambda_context=None):
+    t0 = time.perf_counter()
     try:
         ctx, args = context.extract(event)
         subject = args["subject"]
@@ -76,6 +79,7 @@ def handler(event, _lambda_context=None):
         arg_valid_to = args.get("valid_to")
         arg_asserted_at = args.get("asserted_at")
         idempotency_key = args.get("idempotency_key")
+        context_summary = args.get("context_summary")  # enriches the semantic embedding
         evidence = args.get("evidence") or []
         if not isinstance(evidence, list):
             raise ValueError("evidence must be a list of {evidence_type, evidence_ref, ...}")
@@ -115,7 +119,13 @@ def handler(event, _lambda_context=None):
             {"t": tenant, "s": subject, "p": predicate},
         ).first()
     if exists is None:
-        subject_vec = embeddings.to_vector_literal(embeddings.embed(subject))
+        # Embed a normalized representation (entity + predicate + value + context),
+        # not the raw subject id, so semantic recall finds relevant knowledge.
+        embed_text = embeddings.build_embedding_text(
+            subject=subject, predicate=predicate, value=value,
+            entity_type=entity_type, context_summary=context_summary,
+        )
+        subject_vec = embeddings.to_vector_literal(embeddings.embed(embed_text))
 
     observed_at = _utc_now_str()
     # asserted_at defaults to observed_at when the caller does not distinguish them.
@@ -348,6 +358,14 @@ def handler(event, _lambda_context=None):
                      "t": tenant, "k": idempotency_key},
                 )
 
+        log_event("record_fact", tenant_id=t, predicate=predicate,
+                  outcome=result["outcome"], status=result["status"],
+                  policy_version=result["policy_version"],
+                  subject_id=result["subject_id"], event_id=result["event_id"],
+                  disputed=(result["status"] == "disputed"),
+                  evidence_count=result["evidence_count"],
+                  correlation_id=correlation_id(ctx),
+                  duration_ms=round((time.perf_counter() - t0) * 1000, 1))
         return result
     except _IdempotentReplay:
         with engine.connect() as probe:
@@ -359,11 +377,18 @@ def handler(event, _lambda_context=None):
         if prior is not None and prior.result_json:
             res = json.loads(prior.result_json)
             res["idempotent_replay"] = True
+            log_event("record_fact", tenant_id=ctx.tenant_id, predicate=predicate,
+                      outcome=res.get("outcome"), status=res.get("status"),
+                      idempotent_replay=True, correlation_id=correlation_id(ctx),
+                      duration_ms=round((time.perf_counter() - t0) * 1000, 1))
             return res
         # Claim committed but result not yet visible (shouldn't happen: both are one
         # txn) — surface a retryable conflict rather than risk a duplicate.
         return {"error": "idempotency key in progress; retry", "error_type": "Conflict"}
     except ValueError as e:
+        log_event("record_fact.error", tenant_id=getattr(ctx, "tenant_id", None),
+                  error_type="ValueError", correlation_id=correlation_id(ctx),
+                  duration_ms=round((time.perf_counter() - t0) * 1000, 1))
         return {"error": str(e), "error_type": "ValueError"}
 
 
