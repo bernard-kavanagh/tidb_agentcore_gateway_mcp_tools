@@ -16,7 +16,7 @@ Governed fact-of-record service for AI agents: facts are written through a deter
 
 ## Stack
 
-- TiDB Cloud (Dedicated/Premium — the HNSW vector index requires it), MySQL wire protocol, SQLAlchemy.
+- TiDB Cloud **Serverless** (a.k.a. Starter — our cluster), MySQL wire protocol, SQLAlchemy. The HNSW vector index **is** supported on Serverless. Per TiDB docs, vector search is available on TiDB Cloud **Starter/Serverless, Essential, and Dedicated**, plus **Self-Managed** — notably **not** Premium (Dedicated/Self-Managed require TiDB v8.4.0+). So it is not "Dedicated-only," but it is also not universal. Serverless does **not** support resource-control DDL (`CREATE RESOURCE GROUP`).
 - AWS: AgentCore Gateway / Policy (Cedar) / Identity (Cognito JWT), Lambda, Secrets Manager.
 - Python Lambda handlers.
 

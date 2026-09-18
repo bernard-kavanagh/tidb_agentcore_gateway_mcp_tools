@@ -152,24 +152,47 @@ A later **lower-authority** contrary assertion (`user_assertion: legitimate`) is
 
 ## 12. Deployment
 
-1. `cp deploy/env.example.sh deploy/env.sh`; fill region, TiDB secret ARN, Cognito
-   discovery URL + client IDs, gateway name, and Lambda ARNs. Cognito must mint
-   `tenant_id` as a first-class claim.
-2. Apply schema in order: `sql/01_schema.sql`, then migrations `04`→`07`, then
-   `sql/02_seed.sql`, then `sql/03_roles.sql` (store the role password in the
-   Secrets Manager secret; never in SQL).
-3. Package the handlers (`handlers/` + `requirements.txt`) as Lambdas; record ARNs.
-4. `bash deploy/deploy.sh` (dry-run) → verify AgentCore CLI flags → re-run with `DEPLOY_FOR_REAL=1`.
+**Full runbook: [`DEPLOYMENT.md`](DEPLOYMENT.md).** IaC for the compute tier lives
+in [`cdk/`](cdk/). Two regions, on purpose: the Lambdas/Gateway/Cognito/Bedrock
+run in **eu-west-1**; the TiDB cluster (and its secret) stay in **eu-central-1**
+and are reached over the public TLS endpoint. `AWS_REGION` is reserved inside
+Lambda (auto = eu-west-1); the Secrets Manager region is derived from the secret
+ARN, so a eu-west-1 Lambda reads the eu-central-1 secret with no drift.
+
+Staged, operator-gated — nothing mutates AWS until you opt in:
+
+- **Gate A — prerequisites.** `source deploy/env.sh && python3 deploy/validate_config.py`;
+  confirm account/region, CDK bootstrap (reuse), Bedrock model access, TiDB secret, Cognito.
+- **Gate B — TiDB schema (independent of AWS).** Apply migrations to the existing
+  eu-central-1 cluster with the operator-controlled runner (dry-run by default;
+  `schema_migrations` tracks applied files; `03_roles` is opt-in and runs last):
+  `./deploy/apply_migrations.sh --dry-run` → `APPLY_FOR_REAL=1 ./deploy/apply_migrations.sh`
+  (`--with-roles` for the scoped role). Never run by CDK/`deploy.sh`.
+- **Gate B — Lambda/IAM (CDK).** `cd cdk && cdk deploy -c factLayerSecretArn=…`
+  provisions the 9 tool Lambdas + interceptor + preflight + least-priv role + log
+  groups. Then `bash deploy/smoke_tidb.sh` proves cross-region TLS/auth/read.
+- **Gate C — Gateway (Cedar LOG_ONLY).** `bash deploy/deploy.sh` (dry-run) →
+  `DEPLOY_FOR_REAL=1 bash deploy/deploy.sh`: Gateway (`--protocol-type MCP`,
+  CUSTOM_JWT) + 9 targets + interceptor (`update-gateway --interceptor-configurations`)
+  + Cedar engine in LOG_ONLY. `bash deploy/smoke_gateway.sh` classifies each layer.
+- **Gate D — enforcement.** `DEPLOY_FOR_REAL=1 bash deploy/set_cedar_mode.sh ENFORCE`
+  (flips LOG_ONLY→ENFORCE via `update-gateway --policy-engine-configuration`; no redeploy).
+
+See DEPLOYMENT.md for the interceptor/Cedar ordering assumption and its deploy-confirm checks.
 
 ## 13. Testing
 
 ```bash
-python3 tests/test_offline.py     # 34/34: adjudication (all outcomes), authority selection,
-                                  #        canonical keys, temporal hashing, embedding text,
-                                  #        observability redaction, hash chain, write control
-python3 cedar/policy_eval.py      # 11/11: tenant-isolation permits incl. cross-tenant deny
+python3 tests/test_offline.py       # 34/34: adjudication (all outcomes), authority selection,
+                                    #        canonical keys, temporal hashing, embedding text,
+                                    #        observability redaction, hash chain, write control
+python3 tests/test_interceptor.py   # 7/7:  interceptor tenant extraction, missing/mismatch,
+                                    #        handler defense-in-depth tenant match
+python3 tests/test_deploy_config.py # 12/12: secret-ARN parsing, two-region model, Bedrock-region
+                                    #        separation, tenant map / Cedar mode / embed dim
+python3 cedar/policy_eval.py        # 11/11: tenant-isolation permits incl. cross-tenant deny
 TIDB_TEST_URL=... python3 tests/test_integration.py   # idempotency + cross-tenant read
-                                  # isolation against a live TiDB (SKIPs without a cluster)
+                                    # isolation against a live TiDB (SKIPs without a cluster)
 ```
 
 The deterministic adjudication, authority selection, tamper-evidence, and Cedar

@@ -1,0 +1,4 @@
+# CDK app dependencies (synth/deploy only — NOT the Lambda runtime deps, which
+# come from the repo-root requirements.txt bundled into each function).
+aws-cdk-lib>=2.130.0,<3.0.0
+constructs>=10.0.0,<11.0.0

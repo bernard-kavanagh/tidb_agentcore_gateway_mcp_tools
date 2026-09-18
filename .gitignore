@@ -6,6 +6,11 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# CDK synth/build output
+cdk/cdk.out/
+cdk.out/
+cdk/.cdk.staging/
+
 # Local operator env (secrets/ARNs live here — never commit)
 deploy/env.sh
 

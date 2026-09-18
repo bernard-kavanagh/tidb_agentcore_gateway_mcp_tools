@@ -3,6 +3,12 @@
 Used by record_fact (to populate fact_subject.subject_vec on subject creation)
 and by vector_search (to embed the query text). Cosine distance in TiDB, so we
 request normalized embeddings.
+
+REGION: Bedrock is invoked in the DEPLOYMENT region, NOT the TiDB region. The
+Lambda runs in eu-west-1, so embeddings must call Bedrock in eu-west-1 (where
+Titan V2 model access is enabled) — never inherit the eu-central-1 TiDB region.
+We read BEDROCK_REGION explicitly and fall back to the Lambda's own AWS_REGION
+(auto-set to eu-west-1 for a function deployed there), never a hardcoded region.
 """
 
 from __future__ import annotations
@@ -11,7 +17,11 @@ import json
 import os
 from functools import lru_cache
 
-_REGION = os.environ.get("AWS_REGION", "eu-central-1")
+# Bedrock region: explicit BEDROCK_REGION, else the Lambda's own region
+# (AWS_REGION, auto-set by the runtime), else the deployment region default.
+_REGION = (os.environ.get("BEDROCK_REGION")
+           or os.environ.get("AWS_REGION")
+           or "eu-west-1")
 _MODEL_ID = os.environ.get("EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0")
 EMBED_DIM = int(os.environ.get("EMBED_DIM", "1024"))
 

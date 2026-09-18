@@ -1,0 +1,21 @@
+{
+  "app": "python3 app.py",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["README.md", "cdk*.json", "requirements*.txt", "*.pyc", "cdk.out"]
+  },
+  "context": {
+    "region": "eu-west-1",
+    "tidbRegion": "eu-central-1",
+    "bedrockRegion": "eu-west-1",
+    "embedModelId": "amazon.titan-embed-text-v2:0",
+    "embedDim": "1024",
+    "agentCoreServicePrincipal": "bedrock-agentcore.amazonaws.com",
+    "logRetentionDays": "14",
+    "_comment_secret": "factLayerSecretArn MUST be supplied at deploy time with -c factLayerSecretArn=arn:... (the placeholder below only lets `cdk synth` run for review; deploy will refuse it).",
+    "factLayerSecretArn": "arn:aws:secretsmanager:eu-central-1:000000000000:secret:PLACEHOLDER-REPLACE-AT-DEPLOY",
+    "tenantSecretArns": "",
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true
+  }
+}

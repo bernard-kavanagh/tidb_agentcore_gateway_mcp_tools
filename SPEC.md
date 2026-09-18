@@ -38,7 +38,7 @@ The build is complete when all of the following hold end to end:
 This is a **standalone** build — its own Gateway, its own Cognito app client, its own thin validation. It does not attach to any existing agent or Gateway.
 
 - **Region:** one region for the TiDB cluster, the Secrets Manager secret, the Lambdas, and the Gateway. The reference TiDB cluster and secret currently live in `eu-central-1` — put the rest there too, or the handler can't read its secret.
-- TiDB Cloud cluster: connection host/port, and the tier (must support the HNSW vector index — Dedicated/Premium).
+- TiDB Cloud cluster: connection host/port, and the tier. The reference cluster is **TiDB Cloud Serverless** (a.k.a. Starter), which supports the HNSW vector index. Per TiDB docs, vector search is available on **Starter/Serverless, Essential, and Dedicated**, plus **Self-Managed** — **not** Premium (Dedicated/Self-Managed need TiDB v8.4.0+). So it is not Dedicated-gated, but Premium would not work. (Note: Serverless does not support resource-control DDL, which is why `03_roles.sql` creates no resource group.)
 - AWS Secrets Manager ARN of the scoped TiDB connection secret (same region).
 - Cognito: a **dedicated** app client for the fact layer — pool ID, discovery URL, allowed client IDs. Configure it to mint `tenant_id` (see token requirement); do not reuse a `username`-only client from another app.
 - A name for the fact layer's Gateway (created in task 5); its ARN after creation.
@@ -144,9 +144,11 @@ CREATE TABLE agent_session (
 
 Join keys: `fact_event.subject_id → fact_subject.subject_id` and `fact_event.session_id → agent_session.session_id`. Enforce in the write path; if using TiDB `FOREIGN KEY` constraints, confirm the cluster version supports them for a hot write table first.
 
-### 2. TiDB roles + resource control groups
+### 2. TiDB roles (+ resource control groups — Dedicated only)
 
-Create a scoped TiDB role per agent-type (or per tenant), granting only the DML the handlers need on these tables. Attach a resource control group so one caller's load cannot starve others. This role is the last-line data scope, independent of Cedar.
+Create a scoped TiDB role per agent-type (or per tenant), granting only the DML the handlers need on these tables. This role is the last-line data scope, independent of Cedar.
+
+> **Tier caveat (this deployment is Serverless):** resource control groups are a **Dedicated-tier** feature — `CREATE RESOURCE GROUP` is unsupported on Serverless, so `03_roles.sql` creates none. The "one caller's load cannot starve others" guarantee is therefore **not provided at the DB layer** on Serverless (capacity is metered by shared cluster RU/quota, not per-caller). If per-tenant fairness / noisy-neighbor protection is required, enforce it above the DB — e.g. per-tenant Lambda reserved/max concurrency or Gateway throttling — or move to Dedicated.
 
 ### 3. Secrets Manager
 

@@ -46,13 +46,13 @@ CREATE TABLE fact_subject (
   tenant_id    VARCHAR(64)  NOT NULL,
   subject      VARCHAR(255) NOT NULL,                  -- the entity the fact is about
   predicate    VARCHAR(128) NOT NULL,                  -- the attribute asserted
-  subject_vec  VECTOR(1024),                           -- semantic recall (tier-gated; see note)
+  subject_vec  VECTOR(1024),                           -- semantic recall (HNSW; supported on Serverless — see note)
   created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_identity (tenant_id, subject, predicate)
 );
 ```
 
-The `UNIQUE KEY (tenant_id, subject, predicate)` is the grain. One row per distinct fact-identity, regardless of how many sessions touch it. `subject_vec` gives "find facts semantically like this" — add an HNSW vector index per the [vector-search-index docs](https://docs.pingcap.com/ai/vector-search-index.md). **Caveat:** HNSW vector index is tier-gated to TiDB Cloud Dedicated/Premium; a workaround exists on other tiers, so it's not a hard gate, but flag the tier on customer materials.
+The `UNIQUE KEY (tenant_id, subject, predicate)` is the grain. One row per distinct fact-identity, regardless of how many sessions touch it. `subject_vec` gives "find facts semantically like this" — add an HNSW vector index per the [vector-search-index docs](https://docs.pingcap.com/ai/vector-search-index.md). **Note:** per TiDB docs, the HNSW vector index is available on TiDB Cloud Serverless/Starter, Essential, and Dedicated, plus Self-Managed — **not** Premium (Dedicated/Self-Managed need v8.4.0+). It is not Dedicated-gated. This cluster runs on Serverless, which supports it.
 
 ### 2. `fact_event` — the append log (the "many" side; the audit trail)
 
@@ -181,7 +181,7 @@ Reads stay typed and enumerated: `vector_search`, `query_tenant_metrics` (named 
 
 ```
 Cluster + schema
-  → TiDB roles + Resource Control Groups (scoped per agent-type / tenant)
+  → TiDB roles (scoped per agent-type / tenant)   [Resource Control Groups: Dedicated-only, N/A on Serverless]
   → Secrets Manager (ARN-only; scoped connection secret — never env vars)
   → Tool handlers (record_fact + typed reads; MySQL wire via SQLAlchemy)
   → [Phase A] Gateway Lambda targets   OR   [Phase B] MCP-server target on Runtime
@@ -202,7 +202,7 @@ Three points to hold:
 
 ```
 1. Cluster + schema (fact_subject, fact_event, fact_current, TiFlash replica, vector index)
-2. TiDB roles + Resource Control Groups
+2. TiDB roles (Resource Control Groups omitted — unsupported on Serverless; see governance chain note)
 3. Secrets Manager (scoped secret, ARN-only)
 4. Handlers: record_fact (the ACID txn + contradiction test) + typed reads
 5. Phase A: Lambda + Gateway targets  →  validate full chain end to end
@@ -233,7 +233,7 @@ Each step needs the one before it: Cedar (7) before handlers exist (4) has nothi
 - `fact_current` is **write-through**, not a materialized view — TiDB has none.
 - Event PK is **`AUTO_RANDOM`** — `AUTO_INCREMENT` on a clustered PK causes the hotspot.
 - **Tamper-evident**, not immutable. Correctability via new events, not mutation.
-- HNSW vector index is **Dedicated/Premium** tier-gated (workaround exists).
+- HNSW vector index is **available on Serverless** (Starter) — not Dedicated-gated; this cluster is Serverless.
 - TiFlash freshness is **async** → "sub-second under normal load."
 - AgentCore **Optimization is public preview**; **Registry is preview** and mid-namespace-migration (`bedrock-agentcore` → `agent-registry`, old namespace retiring Sep 2026). Don't hard-code the old one.
 - The fact layer is **distinct from Lab 2's SEMANTIC/SUMMARIZATION** namespaces. Retrieval projection ≠ system of record.
