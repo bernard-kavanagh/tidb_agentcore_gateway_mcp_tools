@@ -47,7 +47,7 @@ _METRICS: dict[str, str] = {
 
 def handler(event, _lambda_context=None):
     try:
-        ctx, args = context.extract(event)
+        ctx, args = context.extract(event, _lambda_context)
         metric = args["metric"]
     except (KeyError, PermissionError, ValueError) as e:
         return {"error": str(e), "error_type": type(e).__name__}

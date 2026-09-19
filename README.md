@@ -40,9 +40,9 @@ authority policy.
 Caller (agent / test client)
    │  Cognito JWT (tenant_id is a first-class claim)
    ▼
-AgentCore Gateway ── request interceptor (inject verified identity + tenant-scoped cred)
+AgentCore Gateway ── request interceptor (independent JWT verification; pass-through)
    │                        ▼
-   │                     Cedar (ENFORCE, deny-by-default) — param-vs-claim tenant isolation
+   │                     Cedar governance (deny-by-default) — param-vs-claim tenant isolation (reference profile)
    ▼
 Typed Lambda tools ──────────────────────────────────────────────────────────
    record_fact · explain_fact · get_fact · get_fact_history ·
@@ -96,12 +96,17 @@ folded into the hash chain; `ingested_at` is bookkeeping and is not.
 
 ## 8. Tenant isolation & security
 
-`Cognito JWT → interceptor (verified tenant_id) → Cedar (param-vs-claim) →
-tenant-scoped tool → tenant-scoped TiDB role`. `tenant_id` is compared literally
-in Cedar and must arrive as a first-class claim; the LLM-supplied value is never
-trusted (the handler asserts arg == verified claim as defense in depth, and every
-query is tenant-scoped). Authorization (Cedar) is kept separate from adjudication
-(what happens to an assertion).
+`tenant_id` in a tool call is the **requested data scope** (a selector), *not* an
+authenticated identity. The handler validates it and applies it deterministically
+to every tenant-scoped query. **Authorization** that the caller may select that
+scope belongs to the **Gateway governance layer** — the reference profile is
+Cognito JWT + Cedar tenant-equality (`context.input.tenant_id ==
+principal.getTag("tenant_id")`, deny-by-default, enforced in ENFORCE; shadow-only
+in LOG_ONLY). Other authorization profiles (self-service, workforce/delegated,
+service workload, global/read-only) can be substituted **without changing the
+tools**. See `ARCHITECTURE.md` for the authoritative Fact Layer vs governance
+contract. Authorization is kept separate from adjudication (what happens to an
+assertion).
 
 ## 9. MCP tools (typed; no free-form SQL)
 

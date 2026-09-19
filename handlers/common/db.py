@@ -77,10 +77,12 @@ def _build_engine(creds: dict) -> Engine:
 
 @lru_cache(maxsize=16)
 def get_engine(secret_arn: str) -> Engine:
-    """Engine for the tenant-scoped role identified by `secret_arn`.
+    """Engine for the DB role identified by `secret_arn`.
 
-    The interceptor swaps to the tenant-scoped credential and passes its ARN;
-    the handler calls this with that ARN so the DB session is scoped to the
-    tenant's role — the last-line data scope, independent of Cedar.
+    The handler resolves the credential ARN for the requested tenant scope (a
+    per-tenant secret, or the shared runtime secret) and calls this with it. In
+    per-tenant-credential deployments this scopes the DB session to the tenant's
+    role; in the current shared-credential profile the tenant_id SQL predicate
+    carries the scope.
     """
     return _build_engine(get_secret(secret_arn))

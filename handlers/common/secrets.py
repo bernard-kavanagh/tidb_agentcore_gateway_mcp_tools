@@ -1,7 +1,7 @@
 """TiDB connection credentials resolved from AWS Secrets Manager BY ARN.
 
 Hard rule: secret *material* never lives in environment variables or code.
-Only the ARN is passed around (via the interceptor context or a config ARN);
+Only the ARN is passed around (resolved from configuration for the requested tenant scope);
 the material is fetched from Secrets Manager at runtime and cached in-process
 for the life of the warm Lambda container.
 

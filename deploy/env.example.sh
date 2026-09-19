@@ -40,11 +40,16 @@ export COGNITO_ALLOWED_CLIENTS="<CLIENT_ID_1>,<CLIENT_ID_2>"
 export GATEWAY_NAME="fact-layer-gw"
 export GATEWAY_ARN=""                        # filled after the gateway is created (for Cedar template)
 export GATEWAY_IDENTIFIER=""                 # gateway id for `aws bedrock-agentcore-control update-gateway`
+export GATEWAY_URL=""                        # gateway MCP endpoint (from create/get-gateway .gatewayUrl); used by smoke_gateway.sh
+# Least-privilege Gateway invocation role. Leave EMPTY to let deploy.sh create it
+# (name fact-layer-gateway-invoke, trust bedrock-agentcore.amazonaws.com, invoke
+# ONLY the 9 tool Lambdas + interceptor). Set it to pin an existing role ARN.
+export GATEWAY_ROLE_ARN=""
 
 # Cedar policy engine — START IN LOG_ONLY (Gate C). Flip to ENFORCE at Gate D
 # with deploy/set_cedar_mode.sh (no redeploy of Lambdas needed).
 export CEDAR_MODE="LOG_ONLY"
-export POLICY_ENGINE_NAME="fact-layer-cedar"
+export POLICY_ENGINE_NAME="FactLayerCedar"   # CreatePolicyEngine name must match ^[A-Za-z][A-Za-z0-9_]*$ (no hyphens)
 export POLICY_ENGINE_ARN=""                  # filled after the policy engine is created (for mode switch)
 
 # ── Lambda ARNs (from the CDK stack outputs — see cdk/) ──────────────────────

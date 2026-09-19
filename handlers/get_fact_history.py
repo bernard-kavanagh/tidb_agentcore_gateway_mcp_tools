@@ -28,7 +28,7 @@ def _loads(v):
 
 def handler(event, _lambda_context=None):
     try:
-        ctx, args = context.extract(event)
+        ctx, args = context.extract(event, _lambda_context)
         subject = args["subject"]
         predicate = args["predicate"]
     except (KeyError, PermissionError, ValueError) as e:

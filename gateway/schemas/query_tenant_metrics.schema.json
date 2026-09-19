@@ -6,21 +6,11 @@
     "properties": {
       "tenant_id": {
         "type": "string",
-        "description": "Tenant to report on. Must equal the caller's verified tenant_id claim (enforced by Cedar)."
+        "description": "Tenant to report on (requested data scope). The Gateway governance layer authorizes whether the caller may select it."
       },
       "metric": {
         "type": "string",
-        "enum": [
-          "fact_count",
-          "active_count",
-          "disputed_count",
-          "superseded_count",
-          "retracted_count",
-          "event_count",
-          "supersede_rate",
-          "dispute_rate"
-        ],
-        "description": "The named metric to compute."
+        "description": "The named metric to compute. One of: fact_count|active_count|disputed_count|superseded_count|retracted_count|event_count|supersede_rate|dispute_rate (enum moved to description per AgentCore SchemaDefinition; enforced server-side by the metric registry — unknown metrics are rejected with the allowed list)."
       }
     },
     "required": ["tenant_id", "metric"]

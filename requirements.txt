@@ -2,3 +2,9 @@
 SQLAlchemy>=2.0,<3.0
 PyMySQL>=1.1.0
 boto3>=1.34.0     # Secrets Manager (creds by ARN) + Bedrock Runtime (Titan embeddings)
+# Request interceptor (gateway/interceptor.py): independent JWT verification of the
+# inbound bearer token against the Cognito issuer/JWKS (RS256). Bundled by the CDK
+# asset for all functions; only the interceptor imports it. NOTE: deploying this
+# requires re-bundling the interceptor Lambda (Gate B FactLayerComputeStack).
+PyJWT>=2.8.0
+cryptography>=42.0.0   # RS256 verification backend for PyJWT

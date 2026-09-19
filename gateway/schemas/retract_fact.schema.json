@@ -1,15 +1,15 @@
 {
   "name": "retract_fact",
-  "description": "Retract the current fact for (tenant_id, subject, predicate): appends a hash-chained op='retract' event (history preserved, never deleted) and sets the resolution status to 'retracted'. The retracting source's authority + policy_version are recorded. Tenant-scoped; no free-form SQL. tenant_id must equal the caller's identity claim.",
+  "description": "Retract the current fact for (tenant_id, subject, predicate): appends a hash-chained op='retract' event (history preserved, never deleted) and sets the resolution status to 'retracted'. The retracting source's authority + policy_version are recorded. Tenant-scoped; no free-form SQL. tenant_id is the requested data scope (authorization handled by the Gateway governance layer).",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "tenant_id": {"type": "string", "description": "Tenant. Must equal the caller's verified tenant_id claim (enforced by Cedar)."},
+      "tenant_id": {"type": "string", "description": "Tenant whose data this operation is scoped to (requested data scope). The Gateway governance layer authorizes whether the caller may select it."},
       "subject": {"type": "string", "description": "The subject/entity key the fact is about."},
       "predicate": {"type": "string", "description": "The predicate."},
       "source": {"type": "string", "description": "The source performing the retraction (ranked by authority policy for this predicate)."},
       "reason": {"type": "string", "description": "Optional human-readable reason for the retraction."},
-      "assessor_type": {"type": "string", "enum": ["human", "system", "model", "agent", "user"], "description": "Optional kind of actor performing the retraction."}
+      "assessor_type": {"type": "string", "description": "Optional kind of actor performing the retraction. One of: human|system|model|agent|user (enum moved to description per AgentCore SchemaDefinition; still validated/rejected server-side)."}
     },
     "required": ["tenant_id", "subject", "predicate", "source"]
   }

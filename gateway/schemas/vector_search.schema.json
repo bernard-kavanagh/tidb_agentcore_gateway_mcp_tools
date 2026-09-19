@@ -6,7 +6,7 @@
     "properties": {
       "tenant_id": {
         "type": "string",
-        "description": "Tenant to search within. Must equal the caller's verified tenant_id claim (enforced by Cedar)."
+        "description": "Tenant to search within (requested data scope). The Gateway governance layer authorizes whether the caller may select it."
       },
       "query_text": {
         "type": "string",
@@ -14,9 +14,7 @@
       },
       "top_k": {
         "type": "integer",
-        "minimum": 1,
-        "maximum": 50,
-        "description": "Number of nearest subjects to return (default 10, capped at 50)."
+        "description": "Number of nearest subjects to return, intended range 1..50 (default 10). Upper bound still capped at 50 server-side; DEGRADATION: the Gateway no longer enforces the lower bound >=1."
       }
     },
     "required": ["tenant_id", "query_text"]

@@ -1,12 +1,12 @@
 {
   "name": "record_fact",
-  "description": "Record a fact about a subject through the governed write path. Runs the deterministic contradiction test (per-predicate conflict rule + source-authority gate), appends a hash-chained event to the append-only audit log, and upserts the current truth in one ACID transaction. Corroborations raise confidence, higher-authority contradictions supersede (prior event retained), equal/lower-authority contradictions are recorded as disputes. tenant_id must equal the caller's identity claim.",
+  "description": "Record a fact about a subject through the governed write path. Runs the deterministic contradiction test (per-predicate conflict rule + source-authority gate), appends a hash-chained event to the append-only audit log, and upserts the current truth in one ACID transaction. Corroborations raise confidence, higher-authority contradictions supersede (prior event retained), equal/lower-authority contradictions are recorded as disputes. tenant_id is the requested data scope (authorization handled by the Gateway governance layer).",
   "inputSchema": {
     "type": "object",
     "properties": {
       "tenant_id": {
         "type": "string",
-        "description": "Tenant the fact belongs to. Must equal the caller's verified tenant_id claim (enforced by Cedar before the tool runs)."
+        "description": "Tenant the fact belongs to (requested data scope). The Gateway governance layer authorizes whether the caller may select it."
       },
       "subject": {
         "type": "string",
@@ -17,7 +17,8 @@
         "description": "The attribute being asserted. Must be declared in the predicate registry (e.g. status, last_seen, known_aliases, notes)."
       },
       "value": {
-        "description": "The asserted value. Any JSON type; shape depends on the predicate's value_type (scalar/monotonic/set/freetext)."
+        "type": "object",
+        "description": "Fact value. For this Gateway schema, supply a JSON object. The underlying fact model may support scalar, object, or array values according to the predicate value_type. NOTE: this is a LOSSY AgentCore representation of the handler's arbitrary-JSON contract (AgentCore SchemaDefinition requires a concrete type; object is the least-lossy structured choice)."
       },
       "source": {
         "type": "string",
@@ -25,9 +26,7 @@
       },
       "confidence": {
         "type": "number",
-        "minimum": 0,
-        "maximum": 1,
-        "description": "Optional assessment confidence 0..1. NOT a calibrated probability of truth unless the source establishes one; name model scores appropriately (model_score/risk_score) in metadata."
+        "description": "Optional assessment confidence, intended range 0..1. DEGRADATION: the Gateway no longer enforces the upper bound <=1 (the server-side write-control floor still applies). NOT a calibrated probability of truth unless the source establishes one; name model scores appropriately (model_score/risk_score) in metadata."
       },
       "entity_id": {
         "type": "integer",
@@ -43,8 +42,7 @@
       },
       "assessor_type": {
         "type": "string",
-        "enum": ["human", "system", "model", "agent", "user"],
-        "description": "Optional: what KIND of assessor produced this assertion."
+        "description": "Optional: what KIND of assessor produced this assertion. One of: human|system|model|agent|user (enum moved to description per AgentCore SchemaDefinition; still validated/rejected server-side)."
       },
       "valid_from": {
         "type": "string",
@@ -74,7 +72,7 @@
           "properties": {
             "evidence_type": {"type": "string", "description": "transaction|alert|investigation|model_run|chargeback|device_signal|document|..."},
             "evidence_ref": {"type": "string", "description": "External id in the fraud system (e.g. TX-123, INV-847)."},
-            "relationship": {"type": "string", "enum": ["SUPPORTS", "CONTRADICTS", "DERIVED_FROM", "TRIGGERED_BY", "REVIEWED_IN"], "description": "How the evidence relates to the assertion (default SUPPORTS)."},
+            "relationship": {"type": "string", "description": "How the evidence relates to the assertion. One of: SUPPORTS|CONTRADICTS|DERIVED_FROM|TRIGGERED_BY|REVIEWED_IN (default SUPPORTS; enum moved to description per AgentCore SchemaDefinition; still validated/rejected server-side)."},
             "metadata": {"type": "object", "description": "Optional small structured metadata (no domain-record copies)."},
             "observed_at": {"type": "string", "description": "Optional ISO-8601 time the evidence was observed."}
           },

@@ -18,9 +18,11 @@ backward-compatible): entity_id OR (entity_type [+ canonical_key/entity_key]) to
 bind the fact to a canonical entity; assessor_type (human|system|model|agent|user);
 evidence[] = references back to fraud-domain observations
 ({evidence_type, evidence_ref, relationship?, metadata?, observed_at?}) — stored
-as references, never copies. Identity/provenance (agent_id, session_id, tool_turn)
-and the tenant-scoped DB credential come from the interceptor context, never the
-caller.
+as references, never copies. tenant_id is the requested data scope (tool argument),
+applied deterministically to every tenant-scoped operation; the DB credential is
+resolved from configuration for that scope. Identity/provenance (agent_id,
+session_id, tool_turn) is not propagated to an MCP target — it is recorded as
+"unknown"/None, not an authenticated identity.
 """
 
 from __future__ import annotations
@@ -60,7 +62,7 @@ class _IdempotentReplay(Exception):
 def handler(event, _lambda_context=None):
     t0 = time.perf_counter()
     try:
-        ctx, args = context.extract(event)
+        ctx, args = context.extract(event, _lambda_context)
         subject = args["subject"]
         predicate = args["predicate"]
         value = args["value"]

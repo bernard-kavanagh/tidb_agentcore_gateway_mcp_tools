@@ -27,7 +27,7 @@ def _utc_now_str() -> str:
 
 def handler(event, _lambda_context=None):
     try:
-        ctx, args = context.extract(event)
+        ctx, args = context.extract(event, _lambda_context)
         subject = args["subject"]
         predicate = args["predicate"]
         source = args["source"]

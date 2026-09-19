@@ -9,9 +9,10 @@ Given (tenant_id, subject, predicate) it returns, optimized for agent consumptio
   * the outcome history (ASSERTED -> ... -> current),
 so the agent can EXPLAIN a conclusion rather than merely return a verdict.
 
-Tenant isolation: tenant_id is taken from the interceptor-verified context, never
-the raw argument; every query is scoped to it (defense in depth behind Cedar).
-No free-form SQL.
+Tenant scope: tenant_id is the requested data scope supplied as the tool argument;
+every query is deterministically scoped to it. Authorization that the caller may
+select this scope is handled by the Gateway governance layer (reference profile:
+Cedar tenant-equality). No free-form SQL.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ def _loads(v):
 
 def handler(event, _lambda_context=None):
     try:
-        ctx, args = context.extract(event)
+        ctx, args = context.extract(event, _lambda_context)
         subject = args["subject"]
         predicate = args["predicate"]
     except (KeyError, PermissionError, ValueError) as e:

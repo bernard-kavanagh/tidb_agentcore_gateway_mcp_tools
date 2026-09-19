@@ -22,7 +22,7 @@ _DEFAULT_TOP_K = 10
 
 def handler(event, _lambda_context=None):
     try:
-        ctx, args = context.extract(event)
+        ctx, args = context.extract(event, _lambda_context)
         query_text = args["query_text"]
     except (KeyError, PermissionError, ValueError) as e:
         return {"error": str(e), "error_type": type(e).__name__}

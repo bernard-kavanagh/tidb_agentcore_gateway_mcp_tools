@@ -1,13 +1,13 @@
 {
   "name": "search_entities",
-  "description": "Find canonical entities for the caller's tenant by entity_type and/or a name/key substring. Structured lookup, NOT semantic vector search (use vector_search for that). Tenant-scoped; no free-form SQL. tenant_id must equal the caller's identity claim.",
+  "description": "Find canonical entities for the caller's tenant by entity_type and/or a name/key substring. Structured lookup, NOT semantic vector search (use vector_search for that). Tenant-scoped; no free-form SQL. tenant_id is the requested data scope (authorization handled by the Gateway governance layer).",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "tenant_id": {"type": "string", "description": "Tenant. Must equal the caller's verified tenant_id claim (enforced by Cedar)."},
+      "tenant_id": {"type": "string", "description": "Tenant whose data this operation is scoped to (requested data scope). The Gateway governance layer authorizes whether the caller may select it."},
       "entity_type": {"type": "string", "description": "Optional filter (customer|account|device|ip|card|merchant|...)."},
       "query": {"type": "string", "description": "Optional substring matched against canonical_key or display_name."},
-      "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Max entities to return (default 50, capped)."}
+      "limit": {"type": "integer", "description": "Max entities to return, intended range 1..50 (default 50). Upper bound still capped server-side; DEGRADATION: the Gateway no longer enforces the lower bound >=1."}
     },
     "required": ["tenant_id"]
   }

@@ -1,13 +1,13 @@
 {
   "name": "get_fact_history",
-  "description": "Return the append-only event lineage for (tenant_id, subject, predicate) in observed order: op, outcome, value, source, assessor_type, confidence, policy_version, temporal fields, and hash-chain links. Tenant-scoped; no free-form SQL. tenant_id must equal the caller's identity claim.",
+  "description": "Return the append-only event lineage for (tenant_id, subject, predicate) in observed order: op, outcome, value, source, assessor_type, confidence, policy_version, temporal fields, and hash-chain links. Tenant-scoped; no free-form SQL. tenant_id is the requested data scope (authorization handled by the Gateway governance layer).",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "tenant_id": {"type": "string", "description": "Tenant. Must equal the caller's verified tenant_id claim (enforced by Cedar)."},
+      "tenant_id": {"type": "string", "description": "Tenant whose data this operation is scoped to (requested data scope). The Gateway governance layer authorizes whether the caller may select it."},
       "subject": {"type": "string", "description": "The subject/entity key the fact is about."},
       "predicate": {"type": "string", "description": "The predicate."},
-      "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Max events to return (default 500, capped)."}
+      "limit": {"type": "integer", "description": "Max events to return, intended range 1..500 (default 500). Upper bound still capped server-side; DEGRADATION: the Gateway no longer enforces the lower bound >=1."}
     },
     "required": ["tenant_id", "subject", "predicate"]
   }

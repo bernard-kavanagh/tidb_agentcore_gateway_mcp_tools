@@ -46,9 +46,9 @@ _TIDB_REGION = os.environ.get("TIDB_REGION", "unknown")
 def _resolve_secret_arn(event: dict) -> str:
     """Preflight takes the ARN from the event or FACT_LAYER_SECRET_ARN env.
 
-    (The production handlers get it from the interceptor context; preflight is an
-    ops tool so it accepts a direct override, but still resolves the material by
-    ARN — never a raw credential.)
+    (The production handlers resolve it from configuration for the requested
+    tenant scope; preflight is an ops tool so it accepts a direct override, but
+    still resolves the material by ARN — never a raw credential.)
     """
     arn = (event or {}).get("secret_arn") or os.environ.get("FACT_LAYER_SECRET_ARN")
     if not arn:
