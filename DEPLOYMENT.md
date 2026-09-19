@@ -4,6 +4,18 @@ Staged, operator-gated deployment of the fact layer. **Nothing here mutates AWS
 until you opt in** (`DEPLOY_FOR_REAL=1` for scripts, `cdk deploy` for the compute
 tier). Read this end-to-end before running anything.
 
+> **Status — see `ARCHITECTURE.md` (authoritative).** CDK owns **only** the Gate-B
+> compute tier (the Lambdas/IAM/logs). The **Gateway, targets, Cedar policy
+> engine/policies, and the Cognito reference pool** are created via the **raw
+> AgentCore control-plane** (`deploy/deploy.sh`, `deploy/cognito_setup.sh`,
+> `deploy/set_cedar_mode.sh`) — **not** CDK. Passages below describing the
+> interceptor *injecting* a verified tenant / secret ARN, or the handler comparing
+> the tool argument against an *injected* claim, reflect the original design and
+> are **superseded**: the interceptor independently verifies the JWT and passes the
+> request through; handlers read `tenant_id` (the requested data scope) from the
+> tool argument. Reminder: **LOG_ONLY does not block** (decision is shadow/logged
+> only); **ENFORCE** blocks.
+
 ## Architecture
 
 ```
@@ -12,8 +24,8 @@ Caller
   ▼
 AgentCore Gateway (eu-west-1, CUSTOM_JWT authorizer)
   │
-  ├─ request interceptor Lambda  (extracts verified tenant_id, injects
-  │                               provenance + tenant-scoped secret ARN)
+  ├─ request interceptor Lambda  (independently verifies the inbound JWT via JWKS;
+  │                               passes the request through — no identity/cred injection)
   ▼
 Cedar policy engine  (LOG_ONLY first → ENFORCE at Gate D; param-vs-claim isolation)
   ▼
@@ -279,20 +291,25 @@ Roll back with `... set_cedar_mode.sh LOG_ONLY`.
   **authorizer**). Neither side of that comparison depends on the interceptor's
   injected context — so Cedar isolation holds **regardless** of whether the
   interceptor runs before or after it.
-- The **interceptor** exists for the *handler*: it injects the verified tenant +
-  the tenant-scoped **secret ARN** and provenance the caller cannot forge.
-- The **handler** (`handlers/common/context.py`) independently refuses a tool
-  argument `tenant_id` that disagrees with the injected verified claim (defense
-  in depth) — this is what blocks a cross-tenant call in **LOG_ONLY**, where
-  Cedar only logs.
+- The **interceptor** independently verifies the inbound JWT (JWKS/RS256) and
+  passes the MCP request through unchanged — it does **not** inject identity or a
+  credential (an MCP Lambda target receives only the tool arguments; there is no
+  `_fact_ctx` side channel). See `ARCHITECTURE.md`.
+- The **handler** (`handlers/common/context.py`) reads `tenant_id` — the requested
+  data scope — from the tool argument and applies it to every tenant-scoped query.
+  In **LOG_ONLY** Cedar only logs its decision (it does **not** block); tenant
+  isolation in that mode rests on the per-query `tenant_id` predicate. **ENFORCE**
+  is what makes Cedar actively block a cross-tenant call.
 
-**Do not assume** the interceptor's modifications are visible to Cedar just
-because both are on the gateway. Two deploy-confirm checks decide it empirically:
+Empirically established under LOG_ONLY (evidence table in `ARCHITECTURE.md`):
 
-- **Deploy-confirm A** — `context.input.tenant_id` is populated so Cedar's rule
-  can fire (same-tenant scenarios return ALLOWED).
-- **Deploy-confirm B** — the interceptor-injected tenant-scoped credential opens
-  the correct TiDB session end-to-end.
+- **L0 PROVEN** (authorizer), **L4 PROVEN** (interceptor JWT verification);
+  **L2 / L3 SUPPORTED BY CONTROLLED INFERENCE** — the tenant claim reaches Cedar
+  as `principal.getTag("tenant_id")` and the argument as `context.input.tenant_id`
+  (behavioral evidence: A=ALLOW, B=DENY, C=DENY). Not claimed as direct proof.
+- **Credential path** — the handler resolves the DB secret ARN from configuration
+  for the requested scope (current reference profile: a shared runtime credential;
+  per-tenant credentials are an optional defense-in-depth profile).
 
 If AgentCore's real ordering differs from the assumption (e.g. the interceptor
 cannot influence what Cedar sees), **report the observed behavior** and the

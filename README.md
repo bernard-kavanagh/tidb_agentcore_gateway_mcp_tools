@@ -9,7 +9,25 @@ audit log** of every change.
 It is the institutional memory for the [`fraud_on-aws`](https://github.com/bernard-kavanagh/fraud_on-aws)
 fraud architecture — but it is domain-neutral and knows nothing about fraud.
 
-> Guardrails: `CLAUDE.md`. Original Phase-A build spec: `SPEC.md`.
+### Repository boundary
+
+**This repo owns** the generic Fact Layer: the typed MCP tool handlers (facts,
+history, provenance, disputes, search/similarity, metrics), their TiDB data model
+and deterministic adjudication, the tool schemas, and the reference AgentCore
+Gateway / Cedar / Cognito wiring. **It does not own** any use case — business /
+investigation context (tenant + customer/subject + transaction/case) and
+fraud/support/retail semantics live in the **orchestration layer**
+([`fraud_on-aws`](https://github.com/bernard-kavanagh/fraud_on-aws)), which
+establishes that context and calls these generic tools. `tenant_id` is a
+**requested data scope**; **authorization** to select it belongs to the deployment
+governance boundary (reference profile: Cognito + Cedar tenant-equality — not a
+universal dependency of the tools).
+
+> **`ARCHITECTURE.md` is authoritative** for the Fact Layer vs governance boundary,
+> the interceptor / tenant-scope / credential model, and the authorization
+> profiles. Guardrails: `CLAUDE.md`. `SPEC.md` (build spec) and `DEPLOYMENT.md`
+> (runbook) are original Phase-A material — **historical where they differ from
+> `ARCHITECTURE.md`**.
 
 ## 1. The problem
 

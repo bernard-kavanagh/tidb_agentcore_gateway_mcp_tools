@@ -4,6 +4,19 @@ A governed fact-of-record service for AI agents, exposed as tool handlers behind
 
 This phase ships the handlers as **AWS Lambda targets** behind the Gateway. Standalone MCP-server hosting, registry publication, and evaluation integration are later phases and out of scope here.
 
+> **Status — superseded in places (see `ARCHITECTURE.md`, which is authoritative).**
+> Passages below that describe the request interceptor *injecting* verified
+> identity / `agent_id` / `session_id` / a tenant-scoped credential into the
+> handler (a `_fact_ctx`-style side channel) reflect the ORIGINAL design. The
+> proven implementation: the interceptor **independently verifies the JWT and
+> passes the request through** (no injected identity/credential); an MCP Lambda
+> target receives **only the tool arguments**, so a handler reads `tenant_id` — the
+> **requested data scope** — from the tool argument and resolves the DB credential
+> from configuration. `tenant_id` is a scope selector, **not** authenticated
+> identity; authorization is the Gateway governance layer's job (reference profile:
+> Cognito access-token claim + Cedar tenant-equality; enforced only in ENFORCE).
+> This spec is retained as historical build context.
+
 ---
 
 ## Definition of done
