@@ -1,0 +1,42 @@
+name: CI
+
+# Offline test matrix — no AWS, no TiDB cluster required.
+# Behaviours that touch TiDB are gated on $TIDB_TEST_URL (tests/test_integration.py)
+# and skip cleanly, so this job never falsely reports them as run.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  offline:
+    name: Offline tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Core fact-layer offline suite (adjudication, authority, hashing, write-control)
+        run: python3 tests/test_offline.py
+
+      - name: Cedar tenant-isolation permits (incl. cross-tenant deny)
+        run: python3 cedar/policy_eval.py
+
+      - name: Full offline pytest suite (integration gated-out)
+        run: python3 -m pytest tests/ -q --ignore=tests/test_integration.py
