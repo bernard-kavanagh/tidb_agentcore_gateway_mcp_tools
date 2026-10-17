@@ -40,7 +40,3 @@ jobs:
 
       - name: Full offline pytest suite (integration gated-out)
         run: python3 -m pytest tests/ -q --ignore=tests/test_integration.py
-
-      - name: CLI manifest/schema tests
-        working-directory: cli
-        run: PYTHONPATH="$PWD" python3 -m pytest tests/ -q

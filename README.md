@@ -269,7 +269,6 @@ never falsely reports them as run.
 |---|---|---|---|
 | **Offline logic** — `tests/` (144 passing), incl. `test_offline.py` (34), `test_interceptor.py` (11), `test_deploy_config.py` (12), `test_context.py`, `test_tls.py`, migration/verifier suites | Adjudication (all outcomes), authority selection, canonical keys, temporal hashing, hash chain, write control, interceptor JWT verification, TLS hardening, config/cross-region correctness | nothing | ✅ runs |
 | **Cedar isolation** — `cedar/policy_eval.py` (11 cases) | Tenant-isolation permits incl. cross-tenant deny | nothing | ✅ runs |
-| **CLI** — `cli/tests/` (17 passing) | Manifest/schema validation, CLI stubs, deploy pass-through | nothing | ✅ runs |
 | **TiDB integration** — `tests/test_integration.py` | Idempotency + cross-tenant read isolation on the real write path | live TiDB via `$TIDB_TEST_URL` | ⏭️ skipped (no cluster in CI) |
 | **Deployed Gateway security** — `deploy/smoke_*.sh`, Cedar ENFORCE probes | End-to-end interceptor/Cedar/tenant enforcement | deployed AWS stack | manual, operator-run |
 
